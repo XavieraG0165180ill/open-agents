@@ -66,7 +66,7 @@ export const deepAgent = new ToolLoopAgent({
   stopWhen: stepCountIs(50),
   callOptionsSchema,
   prepareStep: ({ messages, model }) => ({
-    messages: addCacheControlToMessages(messages, model),
+    messages: addCacheControlToMessages({ messages, model }),
   }),
   prepareCall: ({ options, model, ...settings }) => {
     const workingDirectory = options?.workingDirectory ?? process.cwd();

@@ -24,25 +24,30 @@ function isAnthropicModel(model: LanguageModel): boolean {
  *
  * For non-Anthropic models, messages are returned unchanged.
  *
- * @param messages - The array of messages to process
- * @param model - The language model (used to determine provider-specific behavior)
- * @param providerOptions - Custom provider options (defaults to Anthropic ephemeral cache)
+ * @param options - Configuration object
+ * @param options.messages - The array of messages to process
+ * @param options.model - The language model (used to determine provider-specific behavior)
+ * @param options.providerOptions - Custom provider options (defaults to Anthropic ephemeral cache)
  *
  * @example
  * ```ts
  * prepareStep: ({ messages, model, ...rest }) => ({
  *   ...rest,
- *   messages: addCacheControlToMessages(messages, model),
+ *   messages: addCacheControlToMessages({ messages, model }),
  * }),
  * ```
  */
-export function addCacheControlToMessages(
-  messages: ModelMessage[],
-  model: LanguageModel,
-  providerOptions: Record<string, Record<string, JSONValue>> = {
+export function addCacheControlToMessages({
+  messages,
+  model,
+  providerOptions = {
     anthropic: { cacheControl: { type: "ephemeral" } },
   },
-): ModelMessage[] {
+}: {
+  messages: ModelMessage[];
+  model: LanguageModel;
+  providerOptions?: Record<string, Record<string, JSONValue>>;
+}): ModelMessage[] {
   if (messages.length === 0) return messages;
   if (!isAnthropicModel(model)) return messages;
 
