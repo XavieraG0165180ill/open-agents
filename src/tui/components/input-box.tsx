@@ -304,12 +304,14 @@ export const InputBox = memo(function InputBox({
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {/* Input line */}
+      {/* Input line with top/bottom borders only */}
       <Box
-        borderStyle="round"
-        borderColor={disabled ? "gray" : "white"}
-        paddingLeft={1}
-        paddingRight={1}
+        borderStyle="single"
+        borderTop
+        borderBottom
+        borderLeft={false}
+        borderRight={false}
+        borderColor="gray"
       >
         <Text color={disabled ? "gray" : "white"}>&gt; </Text>
         {disabled ? (
@@ -330,7 +332,7 @@ export const InputBox = memo(function InputBox({
             onPaste={handlePaste}
             isTokenChar={isPasteTokenChar}
             renderToken={renderPasteToken}
-            placeholder=""
+            placeholder='Try "write a test for <filepath>"'
           />
         )}
       </Box>
