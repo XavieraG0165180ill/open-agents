@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createTUI } from "../tui/index.js";
+import { loadAgentsMd } from "./agents-md.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -31,12 +32,19 @@ async function main() {
   }
 
   try {
+    // Load agents.md files from the working directory hierarchy
+    const agentsMd = await loadAgentsMd(workingDirectory);
+
     await createTUI({
       initialPrompt,
       workingDirectory,
       header: {
         name: "Open Harness",
         version: "0.1.0",
+      },
+      agentOptions: {
+        workingDirectory,
+        ...(agentsMd?.content && { customInstructions: "\n[Sourced from 'AGENTS.md' file]\n\n" + agentsMd.content }),
       },
     });
   } catch (error) {
