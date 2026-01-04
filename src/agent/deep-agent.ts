@@ -16,34 +16,14 @@ import {
   taskTool,
 } from "./tools";
 import { buildSystemPrompt } from "./system-prompt";
-import { formatTodosForContext, formatScratchpadForContext } from "./state";
-import type { TodoItem, ScratchpadEntry } from "./types";
-import { todoItemSchema } from "./types";
-import {
-  addCacheControl,
-  compactContext,
-  sharedContext,
-  getSandbox,
-} from "./utils";
+import type { TodoItem } from "./types";
+import { addCacheControl, compactContext, getSandbox, sharedContext } from "./utils";
 import { gateway } from "../models";
 import { createLocalSandbox, type Sandbox } from "./sandbox";
 
 const callOptionsSchema = z.object({
   workingDirectory: z.string(),
   customInstructions: z.string().optional(),
-  todos: z.array(todoItemSchema).optional(),
-  scratchpad: z
-    .map(
-      z.string(),
-      z.object({
-        path: z.string(),
-        content: z.string(),
-        createdAt: z.number(),
-        updatedAt: z.number(),
-        size: z.number(),
-      }),
-    )
-    .optional(),
   sandbox: z.custom<Sandbox>().optional(),
 });
 
@@ -86,16 +66,10 @@ export const deepAgent = new ToolLoopAgent({
     // Update shared context for tool approval functions
     sharedContext.workingDirectory = workingDirectory;
     const customInstructions = options?.customInstructions;
-    const todos = options?.todos ?? [];
-    const scratchpad =
-      options?.scratchpad ?? new Map<string, ScratchpadEntry>();
 
     // Use provided sandbox, or create a local sandbox with the working directory
     const sandbox =
       options?.sandbox ?? createLocalSandbox(workingDirectory);
-
-    const todosContext = formatTodosForContext(todos);
-    const scratchpadContext = formatScratchpadForContext(scratchpad);
 
     return {
       ...settings,
@@ -103,8 +77,6 @@ export const deepAgent = new ToolLoopAgent({
       instructions: buildSystemPrompt({
         cwd: sandbox.workingDirectory,
         customInstructions,
-        todosContext,
-        scratchpadContext,
       }),
       experimental_context: { sandbox },
     };

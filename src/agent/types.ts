@@ -13,15 +13,6 @@ export const todoItemSchema = z.object({
 });
 export type TodoItem = z.infer<typeof todoItemSchema>;
 
-export const scratchpadEntrySchema = z.object({
-  path: z.string(),
-  content: z.string(),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-  size: z.number(),
-});
-export type ScratchpadEntry = z.infer<typeof scratchpadEntrySchema>;
-
 export const memoryEntrySchema = z.object({
   id: z.string(),
   content: z.string(),
@@ -30,12 +21,6 @@ export const memoryEntrySchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type MemoryEntry = z.infer<typeof memoryEntrySchema>;
-
-export interface AgentState {
-  todos: TodoItem[];
-  scratchpad: Map<string, ScratchpadEntry>;
-  workingDirectory: string;
-}
 
 export interface MemoryStore {
   entries: MemoryEntry[];

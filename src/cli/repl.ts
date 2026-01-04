@@ -1,6 +1,5 @@
 import * as readline from "readline";
 import { deepAgent } from "../agent";
-import type { TodoItem, ScratchpadEntry } from "../agent";
 import { printStream } from "./utils/print-stream";
 
 export interface ReplOptions {
@@ -10,9 +9,6 @@ export interface ReplOptions {
 
 export async function startRepl(options: ReplOptions = {}): Promise<void> {
   const { workingDirectory = process.cwd(), prompt: promptPrefix = ">" } = options;
-
-  let todos: TodoItem[] = [];
-  let scratchpad = new Map<string, ScratchpadEntry>();
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -39,8 +35,6 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
       }
 
       if (trimmed === "clear") {
-        todos = [];
-        scratchpad = new Map();
         console.log("State cleared.\n");
         askQuestion();
         return;
@@ -48,8 +42,7 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
 
       if (trimmed === "state") {
         console.log("\nCurrent State:");
-        console.log(`  Todos: ${todos.length}`);
-        console.log(`  Scratchpad entries: ${scratchpad.size}`);
+        console.log("  No persisted agent state");
         console.log("");
         askQuestion();
         return;
@@ -60,8 +53,6 @@ export async function startRepl(options: ReplOptions = {}): Promise<void> {
           prompt: trimmed,
           options: {
             workingDirectory,
-            todos,
-            scratchpad,
           },
         });
 
