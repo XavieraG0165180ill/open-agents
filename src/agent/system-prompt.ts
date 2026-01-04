@@ -153,8 +153,6 @@ When requirements are ambiguous or multiple approaches are viable:
 
 export function buildSystemPrompt(options: {
   cwd?: string;
-  todosContext?: string;
-  scratchpadContext?: string;
   customInstructions?: string;
 }): string {
   const parts = [DEEP_AGENT_SYSTEM_PROMPT];
@@ -165,14 +163,6 @@ export function buildSystemPrompt(options: {
 
   if (options.customInstructions) {
     parts.push(`\n# Project-Specific Instructions\n\n${options.customInstructions}`);
-  }
-
-  if (options.todosContext) {
-    parts.push(`\n# Current State\n\n${options.todosContext}`);
-  }
-
-  if (options.scratchpadContext) {
-    parts.push(`\n${options.scratchpadContext}`);
   }
 
   return parts.join("\n");

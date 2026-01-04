@@ -9,7 +9,5 @@ export type {
   DeepAgentCallOptions,
   TodoItem,
   TodoStatus,
-  ScratchpadEntry,
   MemoryEntry,
-  AgentState,
 } from "./agent";

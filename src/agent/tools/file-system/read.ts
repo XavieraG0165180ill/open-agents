@@ -39,7 +39,6 @@ export const readFileTool = () => tool({
 USAGE:
 - The path should be a FULL absolute path (e.g., /Users/username/project/file.ts), not just /file.ts
 - If a root-like path (e.g., /README.md) does not exist on disk, it may be resolved relative to the workspace root
-- Paths starting with /scratchpad/ are NOT read by this tool - scratchpad content is injected via system context
 - By default reads up to 2000 lines starting from line 1
 - Use offset and limit for long files (both are line-based, 1-indexed)
 - Results include line numbers starting at 1 in "N: content" format
@@ -59,14 +58,6 @@ EXAMPLES:
     const workingDirectory = sandbox.workingDirectory;
 
     try {
-      if (filePath.startsWith("/scratchpad/")) {
-        return {
-          success: false,
-          error: "Scratchpad reads are handled via agent state injection",
-          hint: "The scratchpad content is available in the system context",
-        };
-      }
-
       // Resolve the path relative to working directory
       let absolutePath: string;
       if (path.isAbsolute(filePath)) {
