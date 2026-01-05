@@ -63,7 +63,7 @@ const callOptionsSchema = z.object({
 export type ExplorerCallOptions = z.infer<typeof callOptionsSchema>;
 
 export const explorerSubagent = new ToolLoopAgent({
-  model: "anthropic/claude-sonnet-4-20250514",
+  model: "anthropic/claude-haiku-4.5",
   instructions: EXPLORER_SYSTEM_PROMPT,
   tools: {
     read: readFileTool(),

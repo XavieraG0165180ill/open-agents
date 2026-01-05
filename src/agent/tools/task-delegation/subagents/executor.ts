@@ -52,7 +52,7 @@ const callOptionsSchema = z.object({
 export type ExecutorCallOptions = z.infer<typeof callOptionsSchema>;
 
 export const executorSubagent = new ToolLoopAgent({
-  model: "anthropic/claude-sonnet-4-20250514",
+  model: "anthropic/claude-haiku-4.5",
   instructions: EXECUTOR_SYSTEM_PROMPT,
   tools: {
     read: readFileTool(),
