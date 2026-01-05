@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import * as path from "path";
 import * as fs from "fs";
-import { isPathWithinDirectory, getSandbox, sharedContext } from "../../utils";
+import { isPathWithinDirectory, getSandbox, getApprovalContext } from "../../utils";
 
 const readInputSchema = z.object({
   filePath: z
@@ -54,24 +54,17 @@ function resolveFilePath(filePath: string, workingDirectory: string): string {
   return absolutePath;
 }
 
-/**
- * Check if a read operation needs approval based on the file path.
- * Returns true if the path is outside the working directory.
- */
-function pathNeedsApproval(args: ReadInput): boolean {
-  const absolutePath = resolveFilePath(args.filePath, sharedContext.workingDirectory);
-
-  // Check if within working directory - no approval needed
-  if (isPathWithinDirectory(absolutePath, sharedContext.workingDirectory)) {
-    return false;
-  }
-
-  // Outside working directory - always requires approval
-  return true;
-}
-
 export const readFileTool = () => tool({
-  needsApproval: pathNeedsApproval,
+  needsApproval: (args, { experimental_context }) => {
+    const ctx = getApprovalContext(experimental_context);
+    const absolutePath = resolveFilePath(args.filePath, ctx.workingDirectory);
+    // Check if within working directory - no approval needed
+    if (isPathWithinDirectory(absolutePath, ctx.workingDirectory)) {
+      return false;
+    }
+    // Outside working directory - always requires approval
+    return true;
+  },
   description: `Read a file from the filesystem.
 
 USAGE:
