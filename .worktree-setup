@@ -3,3 +3,7 @@
 bun install
 cp "$GWT_MAIN_PATH/apps/cli/.env" apps/cli/.env
 cp "$GWT_MAIN_PATH/apps/web/.env" apps/web/.env
+
+vc env pull "$GWT_MAIN_PATH/.env.local" --cwd "$GWT_MAIN_PATH"
+grep "^VERCEL_OIDC_TOKEN=" "$GWT_MAIN_PATH/.env.local" >> apps/cli/.env
+grep "^VERCEL_OIDC_TOKEN=" "$GWT_MAIN_PATH/.env.local" >> apps/web/.env
