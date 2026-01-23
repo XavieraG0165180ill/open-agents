@@ -76,7 +76,7 @@ export function shouldAutoApprove(
  *
  * @param experimental_context - The context passed to needsApproval functions
  * @param toolName - Optional tool name for better error messages
- * @returns Object with sandbox, workingDirectory, and approval config
+ * @returns Object with sandbox, workingDirectory, approval config, agentMode, and planFilePath
  */
 export function getApprovalContext(
   experimental_context: unknown,
@@ -85,6 +85,8 @@ export function getApprovalContext(
   sandbox: Sandbox;
   workingDirectory: string;
   approval: ApprovalConfig;
+  agentMode: AgentMode;
+  planFilePath: string | undefined;
 } {
   const context = experimental_context as AgentContext | undefined;
   if (!context?.sandbox) {
@@ -109,6 +111,8 @@ export function getApprovalContext(
     sandbox: context.sandbox,
     workingDirectory: context.sandbox.workingDirectory,
     approval: context.approval ?? defaultApproval,
+    agentMode: context.agentMode ?? "default",
+    planFilePath: context.planFilePath,
   };
 }
 

@@ -11,6 +11,7 @@ import { renderMarkdown } from "./lib/markdown";
 import { useChatContext } from "./chat-context";
 import { ToolCall, getToolApprovalInfo } from "./components/tool-call";
 import { ApprovalPanel } from "./components/approval-panel";
+import { PlanApprovalPanel } from "./components/plan-approval-panel";
 import { QuestionPanel } from "./components/question-panel";
 import { SettingsPanel } from "./components/settings-panel";
 import { ResumePanel } from "./components/resume-panel";
@@ -30,7 +31,13 @@ import type {
   TUIAgentUIMessage,
   TUIAgentUIToolPart,
 } from "./types";
-import type { TaskToolUIPart, AskUserQuestionInput } from "@open-harness/agent";
+import {
+  extractEnterPlanModeOutput,
+  extractExitPlanModeOutput,
+  type TaskToolUIPart,
+  type AskUserQuestionInput,
+  type ExitPlanModeOutput,
+} from "@open-harness/agent";
 
 type AppProps = {
   options: TUIOptions;
@@ -525,6 +532,7 @@ function AppContent({ options }: AppProps) {
     closePanel,
     updateSettings,
     setSessionId,
+    setAgentMode,
   } = useChatContext();
   const { isExpanded, toggleExpanded } = useExpandedView();
   const { isTodoVisible, toggleTodoView } = useTodoView();
@@ -553,6 +561,35 @@ function AppContent({ options }: AppProps) {
     }
   }, [isStreaming]);
 
+  // Track processed tool call IDs to avoid re-processing
+  const processedPlanToolsRef = React.useRef<Set<string>>(new Set());
+
+  // Detect agent mode changes from enter_plan_mode and exit_plan_mode tool results
+  // Only check the last message for efficiency, and track processed tool calls
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.role !== "assistant") return;
+
+    for (const part of lastMessage.parts) {
+      if (!isToolUIPart(part) || part.state !== "output-available") continue;
+      if (processedPlanToolsRef.current.has(part.toolCallId)) continue;
+
+      if (part.type === "tool-enter_plan_mode") {
+        const output = extractEnterPlanModeOutput(part.output);
+        if (output) {
+          processedPlanToolsRef.current.add(part.toolCallId);
+          setAgentMode("plan", output.planFilePath);
+        }
+      } else if (part.type === "tool-exit_plan_mode") {
+        const output = extractExitPlanModeOutput(part.output);
+        if (output) {
+          processedPlanToolsRef.current.add(part.toolCallId);
+          setAgentMode("default");
+        }
+      }
+    }
+  }, [messages, setAgentMode]);
+
   const { hasPendingApproval, activeApprovalId, pendingToolPart } =
     useMemo(() => {
       const lastMessage = messages[messages.length - 1];
@@ -574,6 +611,33 @@ function AppContent({ options }: AppProps) {
         pendingToolPart: null,
       };
     }, [messages]);
+
+  // Detect pending exit_plan_mode approval for custom plan approval panel
+  const { hasPendingPlanApproval, planApprovalId, planOutput } = useMemo(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.role === "assistant") {
+      for (const p of lastMessage.parts) {
+        if (
+          isToolUIPart(p) &&
+          p.type === "tool-exit_plan_mode" &&
+          p.state === "approval-requested"
+        ) {
+          const approval = (p as { approval?: { id: string } }).approval;
+          const output = p.output as ExitPlanModeOutput | undefined;
+          return {
+            hasPendingPlanApproval: true,
+            planApprovalId: approval?.id ?? null,
+            planOutput: output,
+          };
+        }
+      }
+    }
+    return {
+      hasPendingPlanApproval: false,
+      planApprovalId: null,
+      planOutput: null,
+    };
+  }, [messages]);
 
   // Detect pending askUserQuestion tool calls
   const { hasPendingQuestion, pendingQuestionPart, questionToolCallId } =
@@ -816,6 +880,16 @@ function AppContent({ options }: AppProps) {
           questions={pendingQuestionPart.input.questions}
           onSubmit={handleQuestionSubmit}
           onCancel={handleQuestionCancel}
+        />
+      ) : /* Show plan approval panel when there's a pending exit_plan_mode approval */
+      state.activePanel.type === "none" &&
+        hasPendingPlanApproval &&
+        planApprovalId &&
+        planOutput?.planFilePath ? (
+        <PlanApprovalPanel
+          approvalId={planApprovalId}
+          plan={planOutput.plan}
+          planFilePath={planOutput.planFilePath}
         />
       ) : /* Show approval panel when there's a pending approval (replaces status bar and input) */
       state.activePanel.type === "none" &&

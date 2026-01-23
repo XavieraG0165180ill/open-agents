@@ -12,10 +12,14 @@ export {
 } from "./ask-user-question";
 export {
   enterPlanModeTool,
+  isEnterPlanModeOutput,
+  extractEnterPlanModeOutput,
   type EnterPlanModeOutput,
 } from "./enter-plan-mode";
 export {
   exitPlanModeTool,
+  isExitPlanModeOutput,
+  extractExitPlanModeOutput,
   type ExitPlanModeOutput,
   type ExitPlanModeInput,
 } from "./exit-plan-mode";

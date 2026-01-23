@@ -203,12 +203,14 @@ In plan mode, you MUST NOT:
 
 - Read files with \`read\`
 - Search code with \`grep\` and \`glob\`
-- Run read-only bash commands (git status, ls, cat, etc.)
+- Run read-only bash commands (git status, ls, etc.)
 - Delegate to explorer subagents for research
 - Ask user questions with \`ask_user_question\`
-- Write/edit the plan file only
+- Write/edit the plan file using the \`write\` or \`edit\` tool
 
-## Plan File Guidelines
+## Writing the Plan File
+
+**CRITICAL:** Always use the \`write\` tool to create/update the plan file. NEVER use bash commands like \`cat\`, \`echo\`, or heredocs to write the plan file. The \`write\` tool is the only approved method.
 
 Your plan should include:
 1. **Summary**: Brief description of the approach
@@ -220,7 +222,7 @@ Your plan should include:
 ## Exiting Plan Mode
 
 When your plan is complete and ready for user review:
-1. Ensure the plan file is written with all details
+1. Ensure the plan file is written with all details using the \`write\` tool
 2. Call \`exit_plan_mode\` to request user approval
 3. Optionally specify \`allowedPrompts\` for bash commands needed during implementation
 

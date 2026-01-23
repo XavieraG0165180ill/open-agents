@@ -33,11 +33,21 @@ export const writeFileTool = () =>
   tool({
     needsApproval: async (args, { experimental_context }) => {
       const ctx = getApprovalContext(experimental_context, "write");
-      const { approval } = ctx;
+      const { approval, agentMode, planFilePath } = ctx;
 
       // Background and delegated modes auto-approve all operations
       if (shouldAutoApprove(approval)) {
         return false;
+      }
+
+      // In plan mode, auto-approve writes to the plan file (it's the only file allowed)
+      if (agentMode === "plan" && planFilePath) {
+        const absolutePath = path.isAbsolute(args.filePath)
+          ? args.filePath
+          : path.resolve(ctx.workingDirectory, args.filePath);
+        if (absolutePath === planFilePath) {
+          return false;
+        }
       }
 
       return pathNeedsApproval({
@@ -121,11 +131,21 @@ export const editFileTool = () =>
   tool({
     needsApproval: async (args, { experimental_context }) => {
       const ctx = getApprovalContext(experimental_context, "edit");
-      const { approval } = ctx;
+      const { approval, agentMode, planFilePath } = ctx;
 
       // Background and delegated modes auto-approve all operations
       if (shouldAutoApprove(approval)) {
         return false;
+      }
+
+      // In plan mode, auto-approve edits to the plan file (it's the only file allowed)
+      if (agentMode === "plan" && planFilePath) {
+        const absolutePath = path.isAbsolute(args.filePath)
+          ? args.filePath
+          : path.resolve(ctx.workingDirectory, args.filePath);
+        if (absolutePath === planFilePath) {
+          return false;
+        }
       }
 
       return pathNeedsApproval({

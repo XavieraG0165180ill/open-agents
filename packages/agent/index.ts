@@ -29,8 +29,12 @@ export {
   type AskUserQuestionInput,
   type AskUserQuestionOutput,
 } from "./tools/ask-user-question";
-export { type EnterPlanModeOutput } from "./tools/enter-plan-mode";
 export {
+  extractEnterPlanModeOutput,
+  type EnterPlanModeOutput,
+} from "./tools/enter-plan-mode";
+export {
+  extractExitPlanModeOutput,
   type ExitPlanModeOutput,
   type ExitPlanModeInput,
 } from "./tools/exit-plan-mode";

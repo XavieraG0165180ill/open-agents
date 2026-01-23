@@ -83,3 +83,51 @@ export type ExitPlanModeOutput = {
   planFilePath: string | null;
   allowedPrompts?: ExitPlanModeInput["allowedPrompts"];
 };
+
+export function isExitPlanModeOutput(
+  value: unknown,
+): value is ExitPlanModeOutput {
+  // AI SDK wraps tool results in { type: "json", value: {...} }
+  // Unwrap if necessary
+  const unwrapped =
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    "value" in value
+      ? (value as { type: string; value: unknown }).value
+      : value;
+
+  return (
+    typeof unwrapped === "object" &&
+    unwrapped !== null &&
+    "success" in unwrapped &&
+    "plan" in unwrapped &&
+    (unwrapped as ExitPlanModeOutput).success === true
+  );
+}
+
+/**
+ * Extract the actual output value from a potentially wrapped tool result.
+ */
+export function extractExitPlanModeOutput(
+  value: unknown,
+): ExitPlanModeOutput | null {
+  const unwrapped =
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    "value" in value
+      ? (value as { type: string; value: unknown }).value
+      : value;
+
+  if (
+    typeof unwrapped === "object" &&
+    unwrapped !== null &&
+    "success" in unwrapped &&
+    "plan" in unwrapped &&
+    (unwrapped as ExitPlanModeOutput).success === true
+  ) {
+    return unwrapped as ExitPlanModeOutput;
+  }
+  return null;
+}

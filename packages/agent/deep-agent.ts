@@ -19,6 +19,8 @@ import {
   askUserQuestionTool,
   enterPlanModeTool,
   exitPlanModeTool,
+  extractEnterPlanModeOutput,
+  extractExitPlanModeOutput,
 } from "./tools";
 import { buildSystemPrompt } from "./system-prompt";
 import type { TodoItem, ApprovalConfig, AgentMode } from "./types";
@@ -98,12 +100,75 @@ export const deepAgent = new ToolLoopAgent({
   tools,
   stopWhen: stepCountIs(50),
   callOptionsSchema,
-  prepareStep: ({ messages, model, steps }) => ({
-    messages: addCacheControl({
-      messages: compactContext({ messages, steps }),
-      model,
-    }),
-  }),
+  prepareStep: ({ messages, model, steps, experimental_context }) => {
+    const context = experimental_context as {
+      sandbox: Sandbox;
+      approval: ApprovalConfig;
+      agentMode: AgentMode;
+      planFilePath: string | undefined;
+      customInstructions: string | undefined;
+    };
+
+    let agentMode = context.agentMode;
+    let planFilePath = context.planFilePath;
+    let modeChanged = false;
+
+    // Check the last step for mode changes
+    const lastStep = steps[steps.length - 1];
+    if (lastStep?.toolResults) {
+      for (const result of lastStep.toolResults) {
+        if (result.toolName === "enter_plan_mode") {
+          const output = extractEnterPlanModeOutput(result.output);
+          if (output) {
+            agentMode = "plan";
+            planFilePath = output.planFilePath;
+            modeChanged = true;
+          }
+        } else if (result.toolName === "exit_plan_mode") {
+          const output = extractExitPlanModeOutput(result.output);
+          if (output) {
+            agentMode = "default";
+            planFilePath = undefined;
+            modeChanged = true;
+          }
+        }
+      }
+    }
+
+    // Update active tools based on current mode
+    const activeToolNames =
+      agentMode === "plan" ? PLAN_MODE_TOOLS : DEFAULT_MODE_TOOLS;
+
+    // Rebuild instructions if mode changed
+    let instructions: string | undefined;
+    if (modeChanged) {
+      const mode =
+        context.approval.type === "background" ? "background" : "interactive";
+      instructions = buildSystemPrompt({
+        cwd: context.sandbox.workingDirectory,
+        mode,
+        currentBranch: context.sandbox.currentBranch,
+        customInstructions: context.customInstructions,
+        environmentDetails: context.sandbox.environmentDetails,
+        agentMode,
+        planFilePath,
+      });
+    }
+
+    return {
+      messages: addCacheControl({
+        messages: compactContext({ messages, steps }),
+        model,
+      }),
+      activeTools: [...activeToolNames],
+      ...(instructions && { instructions }),
+      experimental_context: {
+        ...(experimental_context as object),
+        agentMode,
+        planFilePath,
+      },
+    };
+  },
   prepareCall: ({ options, model, ...settings }) => {
     if (!options) {
       throw new Error(
@@ -143,7 +208,13 @@ export const deepAgent = new ToolLoopAgent({
       }),
       activeTools: [...activeToolNames],
       instructions,
-      experimental_context: { sandbox, approval, agentMode, planFilePath },
+      experimental_context: {
+        sandbox,
+        approval,
+        agentMode,
+        planFilePath,
+        customInstructions,
+      },
     };
   },
 });

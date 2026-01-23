@@ -19,10 +19,16 @@ export function DefaultRenderer({
   const toolName = getToolName(part);
   const name = toolName.charAt(0).toUpperCase() + toolName.slice(1);
 
+  // Handle undefined or empty input
+  const summary =
+    part.input && Object.keys(part.input).length > 0
+      ? JSON.stringify(part.input).slice(0, 40)
+      : "";
+
   return (
     <ToolLayout
       name={name}
-      summary={JSON.stringify(part.input).slice(0, 40)}
+      summary={summary}
       output={
         part.state === "output-available" && <Text color="white">Done</Text>
       }
