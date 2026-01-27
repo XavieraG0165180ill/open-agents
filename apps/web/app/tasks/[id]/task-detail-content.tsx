@@ -23,8 +23,15 @@ import {
   Pencil,
   Check,
 } from "lucide-react";
+import {
+  generatePlanName,
+  extractEnterPlanModeOutput,
+  extractExitPlanModeOutput,
+} from "@open-harness/shared";
+import type { AskUserQuestionInput, TaskToolUIPart } from "@open-harness/agent";
 
 import { Button } from "@/components/ui/button";
+import { Toggle } from "@/components/ui/toggle";
 import {
   Tooltip,
   TooltipContent,
@@ -35,19 +42,19 @@ import { TaskGroupView } from "@/components/task-group-view";
 import { QuestionPanel } from "@/components/question-panel";
 import { CreatePRDialog } from "@/components/create-pr-dialog";
 import { CreateRepoDialog } from "@/components/create-repo-dialog";
+import { FileSuggestionsDropdown } from "@/components/file-suggestions-dropdown";
 import { ImageAttachmentsPreview } from "@/components/image-attachments-preview";
+import { PlanApprovalPanel } from "@/components/plan-approval-panel";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useAudioRecording } from "@/hooks/use-audio-recording";
+import { useFileSuggestions } from "@/hooks/use-file-suggestions";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
 import type { WebAgentUIToolPart, WebAgentUIMessagePart } from "@/app/types";
-import type { TaskToolUIPart, AskUserQuestionInput } from "@open-harness/agent";
 
 import { useTaskChatContext, type SandboxInfo } from "./task-context";
 import { DiffViewer } from "./diff-viewer";
-import { useFileSuggestions } from "@/hooks/use-file-suggestions";
-import { FileSuggestionsDropdown } from "@/components/file-suggestions-dropdown";
 
 const customComponents = {
   pre: ({ children, ...props }: ComponentProps<"pre">) => {
@@ -527,6 +534,7 @@ export function TaskDetailContent() {
   const [isDragging, setIsDragging] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
+  const [planModeError, setPlanModeError] = useState<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const {
@@ -611,6 +619,9 @@ export function TaskDetailContent() {
     refreshFiles,
     updateTaskSnapshot,
     setSandboxType,
+    agentMode,
+    planFilePath,
+    setPlanMode,
     reconnectionStatus,
     attemptReconnection,
   } = useTaskChatContext();
@@ -624,6 +635,7 @@ export function TaskDetailContent() {
     addToolOutput,
     stop,
   } = chat;
+  const isPlanMode = agentMode === "plan";
 
   const handleFileSelect = (
     value: string,
@@ -659,6 +671,32 @@ export function TaskDetailContent() {
     files,
     onSelect: handleFileSelect,
   });
+
+  const handlePlanModeToggle = useCallback(
+    (pressed: boolean) => {
+      setPlanModeError(null);
+
+      if (!pressed) {
+        setPlanMode("default");
+        return;
+      }
+
+      if (!sandboxInfo || !isSandboxValid(sandboxInfo)) {
+        setPlanModeError("Sandbox is not active yet.");
+        return;
+      }
+
+      if (planFilePath) {
+        setPlanMode("plan", planFilePath);
+        return;
+      }
+
+      const planName = generatePlanName();
+      const relativePlanPath = `.open-harness/plans/${planName}.md`;
+      setPlanMode("plan", relativePlanPath);
+    },
+    [planFilePath, sandboxInfo, setPlanMode],
+  );
 
   const handleKillSandbox = useCallback(async () => {
     if (!sandboxInfo) return;
@@ -946,6 +984,39 @@ export function TaskDetailContent() {
     task.title,
   ]);
 
+  // Track processed plan tool calls to avoid duplicate state updates
+  const processedPlanToolsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage || lastMessage.role !== "assistant") return;
+
+    for (const part of lastMessage.parts) {
+      if (!isToolUIPart(part)) continue;
+      if (processedPlanToolsRef.current.has(part.toolCallId)) continue;
+      if (part.state !== "output-available") continue;
+
+      const approval = (
+        part as { approval?: { approved?: boolean; id?: string } }
+      ).approval;
+      if (approval?.approved === false) continue;
+
+      if (part.type === "tool-enter_plan_mode") {
+        const output = extractEnterPlanModeOutput(part.output);
+        if (output) {
+          processedPlanToolsRef.current.add(part.toolCallId);
+          setPlanMode("plan", output.planFilePath);
+        }
+      } else if (part.type === "tool-exit_plan_mode") {
+        const output = extractExitPlanModeOutput(part.output);
+        if (output) {
+          processedPlanToolsRef.current.add(part.toolCallId);
+          setPlanMode("default");
+        }
+      }
+    }
+  }, [messages, setPlanMode]);
+
   // Track tool completions to trigger diff refresh
   const prevToolStatesRef = useRef<Map<string, string>>(new Map());
   // Track if we've auto-opened the diff panel (don't re-open if user closed it)
@@ -1035,6 +1106,59 @@ export function TaskDetailContent() {
     return { inputTokens: 0, outputTokens: 0 };
   }, [messages]);
 
+  const { hasPendingPlanApproval, planApprovalId, planApprovalFilePath } =
+    useMemo(() => {
+      const lastMessage = messages[messages.length - 1];
+      let pendingApproval: { id?: string } | undefined;
+
+      if (lastMessage?.role === "assistant") {
+        for (const part of lastMessage.parts) {
+          if (
+            isToolUIPart(part) &&
+            part.type === "tool-exit_plan_mode" &&
+            part.state === "approval-requested"
+          ) {
+            pendingApproval = (part as { approval?: { id?: string } }).approval;
+            break;
+          }
+        }
+      }
+
+      if (!pendingApproval) {
+        return {
+          hasPendingPlanApproval: false,
+          planApprovalId: null,
+          planApprovalFilePath: null,
+        };
+      }
+
+      let extractedPlanFilePath: string | null = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (!message || message.role !== "assistant") continue;
+        for (const part of message.parts) {
+          if (
+            isToolUIPart(part) &&
+            part.type === "tool-enter_plan_mode" &&
+            part.state === "output-available"
+          ) {
+            const output = extractEnterPlanModeOutput(part.output);
+            if (output?.planFilePath) {
+              extractedPlanFilePath = output.planFilePath;
+              break;
+            }
+          }
+        }
+        if (extractedPlanFilePath) break;
+      }
+
+      return {
+        hasPendingPlanApproval: true,
+        planApprovalId: pendingApproval.id ?? null,
+        planApprovalFilePath: extractedPlanFilePath ?? planFilePath ?? null,
+      };
+    }, [messages, planFilePath]);
+
   // Detect pending AskUserQuestion tool calls
   const { hasPendingQuestion, pendingQuestionPart, questionToolCallId } =
     useMemo(() => {
@@ -1064,6 +1188,11 @@ export function TaskDetailContent() {
         questionToolCallId: null,
       };
     }, [messages]);
+
+  const isPlanApprovalActive =
+    hasPendingPlanApproval &&
+    planApprovalId !== null &&
+    planApprovalFilePath !== null;
 
   // Handle question submission
   const handleQuestionSubmit = useCallback(
@@ -1422,6 +1551,9 @@ export function TaskDetailContent() {
                         <div key={`${m.id}-${i}`} className="max-w-full">
                           <ToolCall
                             part={p as WebAgentUIToolPart}
+                            activeApprovalId={
+                              isPlanApprovalActive ? planApprovalId : null
+                            }
                             isStreaming={isMessageStreaming}
                             onApprove={(id) =>
                               addToolApprovalResponse({ id, approved: true })
@@ -1499,6 +1631,35 @@ export function TaskDetailContent() {
                 </button>
               </div>
             )}
+            {planModeError && (
+              <div className="flex items-center justify-between rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <span>{planModeError}</span>
+                <button
+                  type="button"
+                  onClick={() => setPlanModeError(null)}
+                  className="ml-2 rounded p-0.5 hover:bg-destructive/20"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+            {isPlanApprovalActive && planApprovalId && planApprovalFilePath && (
+              <PlanApprovalPanel
+                taskId={task.id}
+                approvalId={planApprovalId}
+                planFilePath={planApprovalFilePath}
+                onApprove={(id) =>
+                  addToolApprovalResponse({ id, approved: true })
+                }
+                onDeny={(id, reason) =>
+                  addToolApprovalResponse({
+                    id,
+                    approved: false,
+                    reason,
+                  })
+                }
+              />
+            )}
             {/* Hidden file input */}
             <input
               ref={fileInputRef}
@@ -1534,6 +1695,7 @@ export function TaskDetailContent() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
+                  if (isPlanApprovalActive) return;
                   const hasContent = input.trim() || images.length > 0;
                   if (!hasContent || !isSandboxValid(sandboxInfo)) return;
 
@@ -1587,7 +1749,11 @@ export function TaskDetailContent() {
                   <textarea
                     ref={inputRef}
                     value={input}
-                    placeholder="Request changes or ask a question..."
+                    placeholder={
+                      isPlanMode
+                        ? "Describe what you'd like planned..."
+                        : "Request changes or ask a question..."
+                    }
                     rows={1}
                     onChange={(e) => {
                       setInput(e.currentTarget.value);
@@ -1625,7 +1791,7 @@ export function TaskDetailContent() {
                         }
                       }
                     }}
-                    disabled={status === "streaming"}
+                    disabled={status === "streaming" || isPlanApprovalActive}
                     className="w-full resize-none overflow-y-auto bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none"
                     style={{ minHeight: "24px" }}
                   />
@@ -1639,6 +1805,7 @@ export function TaskDetailContent() {
                       variant="ghost"
                       size="icon"
                       onClick={openFilePicker}
+                      disabled={isPlanApprovalActive}
                       className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
                     >
                       <Paperclip className="h-4 w-4" />
@@ -1648,6 +1815,20 @@ export function TaskDetailContent() {
                         {task.modelId}
                       </span>
                     )}
+                    <div className="flex items-center gap-2">
+                      <Toggle
+                        pressed={isPlanMode}
+                        onPressedChange={handlePlanModeToggle}
+                        disabled={
+                          status === "streaming" ||
+                          isPlanApprovalActive ||
+                          !isSandboxValid(sandboxInfo)
+                        }
+                        aria-label="Toggle plan mode"
+                      >
+                        Plan mode
+                      </Toggle>
+                    </div>
                     {/* TODO: Derive context limit from model ID instead of hardcoding */}
                     <ContextUsageIndicator
                       inputTokens={tokenUsage.inputTokens}
@@ -1662,7 +1843,9 @@ export function TaskDetailContent() {
                       variant="ghost"
                       size="icon"
                       onClick={handleMicClick}
-                      disabled={recordingState === "processing"}
+                      disabled={
+                        recordingState === "processing" || isPlanApprovalActive
+                      }
                       className={`relative h-8 w-8 rounded-full ${
                         recordingState === "recording"
                           ? "text-red-500"
@@ -1692,7 +1875,10 @@ export function TaskDetailContent() {
                       <Button
                         type="submit"
                         size="icon"
-                        disabled={!input.trim() && images.length === 0}
+                        disabled={
+                          isPlanApprovalActive ||
+                          (!input.trim() && images.length === 0)
+                        }
                         className="h-8 w-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30"
                       >
                         <ArrowUp className="h-4 w-4" />

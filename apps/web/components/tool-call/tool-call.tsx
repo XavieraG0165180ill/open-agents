@@ -19,6 +19,8 @@ import { GrepRenderer } from "./renderers/grep-renderer";
 import { TaskRenderer } from "./renderers/task-renderer";
 import { TodoRenderer } from "./renderers/todo-renderer";
 import { AskUserQuestionRenderer } from "./renderers/ask-user-question-renderer";
+import { EnterPlanModeRenderer } from "./renderers/enter-plan-mode-renderer";
+import { ExitPlanModeRenderer } from "./renderers/exit-plan-mode-renderer";
 
 export type ToolCallProps = {
   part: WebAgentUIToolPart;
@@ -70,6 +72,10 @@ export function ToolCall({
     case "tool-ask_user_question":
       // AskUserQuestion tool doesn't require approval, handled separately
       return <AskUserQuestionRenderer part={part} state={state} />;
+    case "tool-enter_plan_mode":
+      return <EnterPlanModeRenderer part={part} state={state} />;
+    case "tool-exit_plan_mode":
+      return <ExitPlanModeRenderer part={part} state={state} />;
     default:
       return (
         <DefaultRenderer

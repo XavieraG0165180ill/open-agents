@@ -1,8 +1,20 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { join } from "node:path";
-import { generatePlanName } from "@open-harness/shared";
+import {
+  generatePlanName,
+  type EnterPlanModeOutput,
+  isEnterPlanModeOutput,
+  extractEnterPlanModeOutput,
+} from "@open-harness/shared";
 import { getAgentContext } from "./utils";
+
+// Re-export from shared for backwards compatibility
+export {
+  type EnterPlanModeOutput,
+  isEnterPlanModeOutput,
+  extractEnterPlanModeOutput,
+};
 
 const enterPlanModeInputSchema = z.object({
   // This input schema is here to stop anthropic streaming bug
@@ -51,53 +63,3 @@ HOW TO EXIT:
       };
     },
   });
-
-// TODO: replace with AI SDK type helper to derive type from tool definition
-export type EnterPlanModeOutput = {
-  success: boolean;
-  message: string;
-  planFilePath: string;
-  planName: string;
-};
-
-export function isEnterPlanModeOutput(
-  value: unknown,
-): value is EnterPlanModeOutput {
-  // AI SDK wraps tool results in { type: "json", value: {...} }
-  // Unwrap if necessary
-  const unwrapped =
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    "value" in value
-      ? (value as { type: string; value: unknown }).value
-      : value;
-
-  return (
-    typeof unwrapped === "object" &&
-    unwrapped !== null &&
-    "success" in unwrapped &&
-    "planFilePath" in unwrapped &&
-    (unwrapped as EnterPlanModeOutput).success === true
-  );
-}
-
-/**
- * Extract the actual output value from a potentially wrapped tool result.
- */
-export function extractEnterPlanModeOutput(
-  value: unknown,
-): EnterPlanModeOutput | null {
-  const unwrapped =
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    "value" in value
-      ? (value as { type: string; value: unknown }).value
-      : value;
-
-  if (isEnterPlanModeOutput(unwrapped)) {
-    return unwrapped as EnterPlanModeOutput;
-  }
-  return null;
-}

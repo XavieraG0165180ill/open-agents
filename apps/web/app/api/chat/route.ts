@@ -20,6 +20,9 @@ export const maxDuration = 300;
 interface ChatRequestBody {
   messages: WebAgentUIMessage[];
   taskId?: string;
+  agentMode?: "default" | "plan";
+  planFilePath?: string | null;
+  disablePlanning?: boolean;
 }
 
 export async function POST(req: Request) {
@@ -36,7 +39,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { messages, taskId } = body;
+  const { messages, taskId, agentMode, planFilePath, disablePlanning } = body;
 
   // 2. Require taskId to ensure sandbox ownership verification
   if (!taskId) {
@@ -112,7 +115,9 @@ export async function POST(req: Request) {
     options: {
       sandbox,
       model,
-      disablePlanning: true,
+      disablePlanning: disablePlanning ?? false,
+      agentMode: agentMode ?? "default",
+      planFilePath: planFilePath ?? undefined,
       // TODO: consider enabling approvals for non-cloud-sandbox environments
       approval: {
         type: "interactive",

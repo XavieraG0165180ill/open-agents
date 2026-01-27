@@ -7,13 +7,15 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import { DefaultChatTransport, isToolUIPart } from "ai";
 import { useChat, type UseChatHelpers } from "@ai-sdk/react";
+import type { SandboxState } from "@open-harness/sandbox";
+import type { AgentMode } from "@open-harness/agent";
 import type { WebAgentUIMessage } from "@/app/types";
 import type { Task } from "@/lib/db/schema";
-import type { SandboxState } from "@open-harness/sandbox";
 import type { DiffResponse } from "@/app/api/tasks/[id]/diff/route";
 import type { FileSuggestion } from "@/app/api/tasks/[id]/files/route";
 import type { ReconnectResponse } from "@/app/api/sandbox/reconnect/route";
@@ -67,6 +69,12 @@ type TaskChatContextValue = {
   updateTaskSnapshot: (snapshotUrl: string, snapshotCreatedAt: Date) => void;
   /** Update sandbox type in task state */
   setSandboxType: (type: "just-bash" | "vercel" | "hybrid") => void;
+  /** Current agent mode (default or plan) */
+  agentMode: AgentMode;
+  /** Active plan file path (when in plan mode) */
+  planFilePath: string | null;
+  /** Update agent mode and plan file path */
+  setPlanMode: (mode: AgentMode, planFilePath?: string | null) => void;
   /** Current status of sandbox reconnection attempt */
   reconnectionStatus: ReconnectionStatus;
   /** Attempt to reconnect to an existing sandbox */
@@ -129,6 +137,13 @@ export function TaskChatProvider({
   children,
 }: TaskChatProviderProps) {
   const [task, setTask] = useState<Task>(initialTask);
+  const [agentMode, setAgentMode] = useState<AgentMode>("default");
+  const [planFilePath, setPlanFilePath] = useState<string | null>(null);
+
+  const agentModeRef = useRef(agentMode);
+  agentModeRef.current = agentMode;
+  const planFilePathRef = useRef(planFilePath);
+  planFilePathRef.current = planFilePath;
 
   const transport = useMemo(
     () =>
@@ -136,6 +151,8 @@ export function TaskChatProvider({
         api: "/api/chat",
         body: () => ({
           taskId: task.id,
+          agentMode: agentModeRef.current,
+          planFilePath: planFilePathRef.current,
         }),
       }),
     [task.id],
@@ -163,6 +180,17 @@ export function TaskChatProvider({
         : null,
     }));
   }, []);
+
+  const setPlanMode = useCallback(
+    (mode: AgentMode, nextPlanFilePath?: string | null) => {
+      agentModeRef.current = mode;
+      planFilePathRef.current =
+        mode === "plan" ? nextPlanFilePath ?? null : null;
+      setAgentMode(mode);
+      setPlanFilePath(mode === "plan" ? nextPlanFilePath ?? null : null);
+    },
+    [],
+  );
 
   const [reconnectionStatus, setReconnectionStatus] =
     useState<ReconnectionStatus>("idle");
@@ -351,6 +379,9 @@ export function TaskChatProvider({
         refreshFiles,
         updateTaskSnapshot,
         setSandboxType,
+        agentMode,
+        planFilePath,
+        setPlanMode,
         reconnectionStatus,
         attemptReconnection,
       }}

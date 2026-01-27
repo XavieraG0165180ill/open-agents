@@ -38,3 +38,14 @@ export {
 
 // Lib - Plan utilities
 export { generatePlanName } from "./lib/plan-utils";
+
+// Lib - Plan mode output extraction (browser-safe)
+export {
+  type EnterPlanModeOutput,
+  isEnterPlanModeOutput,
+  extractEnterPlanModeOutput,
+  type ExitPlanModeInput,
+  type ExitPlanModeOutput,
+  isExitPlanModeOutput,
+  extractExitPlanModeOutput,
+} from "./lib/plan-mode-outputs";

@@ -34,6 +34,11 @@ export const writeFileTool = () =>
     needsApproval: async (args, { experimental_context }) => {
       const ctx = getApprovalContext(experimental_context, "write");
       const { approval, agentMode, planFilePath } = ctx;
+      const resolvedPlanFilePath = planFilePath
+        ? path.isAbsolute(planFilePath)
+          ? planFilePath
+          : path.resolve(ctx.workingDirectory, planFilePath)
+        : undefined;
 
       // Background and delegated modes auto-approve all operations
       if (shouldAutoApprove(approval)) {
@@ -41,11 +46,11 @@ export const writeFileTool = () =>
       }
 
       // In plan mode, auto-approve writes to the plan file (it's the only file allowed)
-      if (agentMode === "plan" && planFilePath) {
+      if (agentMode === "plan" && resolvedPlanFilePath) {
         const absolutePath = path.isAbsolute(args.filePath)
           ? args.filePath
           : path.resolve(ctx.workingDirectory, args.filePath);
-        if (absolutePath === planFilePath) {
+        if (absolutePath === resolvedPlanFilePath) {
           return false;
         }
       }
@@ -91,6 +96,11 @@ EXAMPLES:
         "write",
       );
       const workingDirectory = sandbox.workingDirectory;
+      const resolvedPlanFilePath = planFilePath
+        ? path.isAbsolute(planFilePath)
+          ? planFilePath
+          : path.resolve(workingDirectory, planFilePath)
+        : undefined;
 
       // Resolve the path first for comparison
       const absolutePath = path.isAbsolute(filePath)
@@ -98,7 +108,7 @@ EXAMPLES:
         : path.resolve(workingDirectory, filePath);
 
       // In plan mode, only allow writes to the plan file
-      if (agentMode === "plan" && absolutePath !== planFilePath) {
+      if (agentMode === "plan" && absolutePath !== resolvedPlanFilePath) {
         return {
           success: false,
           error: `In plan mode, you can only write to the plan file: ${planFilePath}. Use exit_plan_mode to switch to default mode.`,
@@ -132,6 +142,11 @@ export const editFileTool = () =>
     needsApproval: async (args, { experimental_context }) => {
       const ctx = getApprovalContext(experimental_context, "edit");
       const { approval, agentMode, planFilePath } = ctx;
+      const resolvedPlanFilePath = planFilePath
+        ? path.isAbsolute(planFilePath)
+          ? planFilePath
+          : path.resolve(ctx.workingDirectory, planFilePath)
+        : undefined;
 
       // Background and delegated modes auto-approve all operations
       if (shouldAutoApprove(approval)) {
@@ -139,11 +154,11 @@ export const editFileTool = () =>
       }
 
       // In plan mode, auto-approve edits to the plan file (it's the only file allowed)
-      if (agentMode === "plan" && planFilePath) {
+      if (agentMode === "plan" && resolvedPlanFilePath) {
         const absolutePath = path.isAbsolute(args.filePath)
           ? args.filePath
           : path.resolve(ctx.workingDirectory, args.filePath);
-        if (absolutePath === planFilePath) {
+        if (absolutePath === resolvedPlanFilePath) {
           return false;
         }
       }
@@ -193,6 +208,11 @@ EXAMPLES:
         "edit",
       );
       const workingDirectory = sandbox.workingDirectory;
+      const resolvedPlanFilePath = planFilePath
+        ? path.isAbsolute(planFilePath)
+          ? planFilePath
+          : path.resolve(workingDirectory, planFilePath)
+        : undefined;
 
       // Resolve the path first for comparison
       const absolutePath = path.isAbsolute(filePath)
@@ -200,7 +220,7 @@ EXAMPLES:
         : path.resolve(workingDirectory, filePath);
 
       // In plan mode, only allow edits to the plan file
-      if (agentMode === "plan" && absolutePath !== planFilePath) {
+      if (agentMode === "plan" && absolutePath !== resolvedPlanFilePath) {
         return {
           success: false,
           error: `In plan mode, you can only edit the plan file: ${planFilePath}. Use exit_plan_mode to switch to default mode.`,

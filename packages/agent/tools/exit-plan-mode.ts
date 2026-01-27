@@ -1,6 +1,21 @@
 import { tool } from "ai";
+import * as path from "path";
 import { z } from "zod";
+import {
+  type ExitPlanModeInput,
+  type ExitPlanModeOutput,
+  isExitPlanModeOutput,
+  extractExitPlanModeOutput,
+} from "@open-harness/shared";
 import { getAgentContext, getApprovalContext } from "./utils";
+
+// Re-export from shared for backwards compatibility
+export {
+  type ExitPlanModeInput,
+  type ExitPlanModeOutput,
+  isExitPlanModeOutput,
+  extractExitPlanModeOutput,
+};
 
 const exitPlanModeInputSchema = z.object({
   _: z.string().describe("Pass an empty string"),
@@ -19,7 +34,7 @@ const exitPlanModeInputSchema = z.object({
     .describe("Prompt-based permissions needed to implement the plan"),
 });
 
-export type ExitPlanModeInput = z.infer<typeof exitPlanModeInputSchema>;
+// Type is imported and re-exported from @open-harness/shared
 
 export const exitPlanModeTool = () =>
   tool({
@@ -33,10 +48,13 @@ export const exitPlanModeTool = () =>
       if (!planFilePath) {
         return false;
       }
+      const resolvedPlanFilePath = path.isAbsolute(planFilePath)
+        ? planFilePath
+        : path.resolve(sandbox.workingDirectory, planFilePath);
 
       // Try to read the plan file and check if it has content
       try {
-        const content = await sandbox.readFile(planFilePath, "utf-8");
+        const content = await sandbox.readFile(resolvedPlanFilePath, "utf-8");
         const hasContent = content.trim().length > 0;
         // Only require approval if there's actual plan content
         return hasContent;
@@ -76,11 +94,14 @@ IMPORTANT:
           planFilePath: null,
         };
       }
+      const resolvedPlanFilePath = path.isAbsolute(planFilePath)
+        ? planFilePath
+        : path.resolve(sandbox.workingDirectory, planFilePath);
 
       // Try to read the plan file
       let plan: string | null = null;
       try {
-        plan = await sandbox.readFile(planFilePath, "utf-8");
+        plan = await sandbox.readFile(resolvedPlanFilePath, "utf-8");
       } catch {
         // Plan file may not exist yet
         plan = null;
@@ -110,63 +131,3 @@ IMPORTANT:
       };
     },
   });
-
-// TODO: use ai sdk type helpers to derive from tool definition
-export type ExitPlanModeOutput = {
-  success: boolean;
-  message?: string;
-  error?: string;
-  plan: string | null;
-  planFilePath: string | null;
-  allowedPrompts?: ExitPlanModeInput["allowedPrompts"];
-};
-
-export function isExitPlanModeOutput(
-  value: unknown,
-): value is ExitPlanModeOutput {
-  // AI SDK wraps tool results in { type: "json", value: {...} }
-  // Unwrap if necessary
-  const unwrapped =
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    "value" in value
-      ? (value as { type: string; value: unknown }).value
-      : value;
-
-  return (
-    typeof unwrapped === "object" &&
-    unwrapped !== null &&
-    "success" in unwrapped &&
-    "plan" in unwrapped &&
-    (unwrapped as ExitPlanModeOutput).success === true
-  );
-}
-
-/**
- * Extract a successful exit_plan_mode output from a potentially wrapped tool result.
- * Returns null if the output is not present, invalid, or indicates failure (success !== true).
- * This ensures mode transitions only occur when the tool execution succeeded.
- */
-export function extractExitPlanModeOutput(
-  value: unknown,
-): ExitPlanModeOutput | null {
-  const unwrapped =
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    "value" in value
-      ? (value as { type: string; value: unknown }).value
-      : value;
-
-  if (
-    typeof unwrapped === "object" &&
-    unwrapped !== null &&
-    "success" in unwrapped &&
-    "plan" in unwrapped &&
-    (unwrapped as ExitPlanModeOutput).success === true
-  ) {
-    return unwrapped as ExitPlanModeOutput;
-  }
-  return null;
-}
