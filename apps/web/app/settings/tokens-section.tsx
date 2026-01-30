@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { Pencil, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -9,7 +10,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useCliTokens, type CliToken } from "@/hooks/use-cli-tokens";
+import { Skeleton } from "@/components/ui/skeleton";
+import { type CliToken, useCliTokens } from "@/hooks/use-cli-tokens";
 
 function formatDate(date: Date | string | null): string {
   if (!date) return "Never";
@@ -248,14 +249,7 @@ export function TokensSection() {
   const [showRevokeAllDialog, setShowRevokeAllDialog] = useState(false);
 
   if (loading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Connected Clients</CardTitle>
-          <CardDescription>Loading connected clients...</CardDescription>
-        </CardHeader>
-      </Card>
-    );
+    return <TokensSectionSkeleton />;
   }
 
   return (
@@ -349,5 +343,49 @@ export function TokensSection() {
         tokenCount={tokens.length}
       />
     </>
+  );
+}
+
+export function TokensSectionSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between">
+          <div>
+            <CardTitle>Connected Clients</CardTitle>
+            <CardDescription>
+              CLI devices that are signed in to your account.
+            </CardDescription>
+          </div>
+          <Button variant="outline" size="sm" disabled>
+            Revoke All
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {[0, 1].map((index) => (
+          <div
+            key={`token-skeleton-${index}`}
+            className="flex items-center justify-between rounded-lg border p-4"
+          >
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-3 w-28" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon-sm" disabled>
+                <Skeleton className="h-4 w-4" />
+                <span className="sr-only">Rename</span>
+              </Button>
+              <Button variant="ghost" size="icon-sm" disabled>
+                <Skeleton className="h-4 w-4" />
+                <span className="sr-only">Revoke</span>
+              </Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

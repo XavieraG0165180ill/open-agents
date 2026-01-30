@@ -1,10 +1,13 @@
 "use client";
 
+import { ArrowLeft, Key, Settings as SettingsIcon, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, User, Settings as SettingsIcon, Key } from "lucide-react";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { cn } from "@/lib/utils";
+import { PreferencesSectionSkeleton } from "./preferences-section";
+import { ProfileSectionSkeleton } from "./profile-section";
+import { TokensSectionSkeleton } from "./tokens-section";
 
 const sidebarItems = [
   {
@@ -27,9 +30,13 @@ const sidebarItems = [
   },
 ];
 
-function SettingsLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-
+function SettingsLayout({
+  children,
+  pathname,
+}: {
+  children: React.ReactNode;
+  pathname: string;
+}) {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Sidebar */}
@@ -85,9 +92,28 @@ function SettingsLayout({ children }: { children: React.ReactNode }) {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const activeItem = sidebarItems.find((item) => item.href === pathname);
+  const fallbackTitle = activeItem?.label ?? "Profile";
+  const fallbackContent =
+    activeItem?.id === "preferences" ? (
+      <PreferencesSectionSkeleton />
+    ) : activeItem?.id === "tokens" ? (
+      <TokensSectionSkeleton />
+    ) : (
+      <ProfileSectionSkeleton />
+    );
+
   return (
-    <AuthGuard>
-      <SettingsLayout>{children}</SettingsLayout>
+    <AuthGuard
+      loadingFallback={
+        <SettingsLayout pathname={pathname}>
+          <h1 className="text-2xl font-semibold">{fallbackTitle}</h1>
+          {fallbackContent}
+        </SettingsLayout>
+      }
+    >
+      <SettingsLayout pathname={pathname}>{children}</SettingsLayout>
     </AuthGuard>
   );
 }

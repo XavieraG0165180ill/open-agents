@@ -3,6 +3,10 @@
 import { useState } from "react";
 import useSWR from "swr";
 import {
+  DEFAULT_SANDBOX_TYPE,
+  type SandboxType,
+} from "@/components/sandbox-selector-compact";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -17,17 +21,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
-import { fetcher } from "@/lib/swr";
 import {
   type AvailableModel,
   DEFAULT_MODEL_ID,
   getModelDisplayName,
 } from "@/lib/models";
-import {
-  DEFAULT_SANDBOX_TYPE,
-  type SandboxType,
-} from "@/components/sandbox-selector-compact";
+import { fetcher } from "@/lib/swr";
 
 interface ModelsResponse {
   models: AvailableModel[];
@@ -38,6 +39,45 @@ const SANDBOX_OPTIONS: Array<{ id: SandboxType; name: string }> = [
   { id: "vercel", name: "Vercel" },
   { id: "just-bash", name: "Just Bash" },
 ];
+
+export function PreferencesSectionSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Agent Preferences</CardTitle>
+        <CardDescription>
+          Default settings for new tasks. You can override these when creating a
+          task.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid gap-2">
+          <Label htmlFor="model">Default Model</Label>
+          <Select disabled>
+            <SelectTrigger id="model" className="w-full max-w-xs">
+              <Skeleton className="h-4 w-32" />
+            </SelectTrigger>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            The AI model used for agent tasks.
+          </p>
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="sandbox">Default Sandbox</Label>
+          <Select disabled>
+            <SelectTrigger id="sandbox" className="w-full max-w-xs">
+              <Skeleton className="h-4 w-28" />
+            </SelectTrigger>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            The execution environment for agent tasks.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function PreferencesSection() {
   const { preferences, loading, updatePreferences } = useUserPreferences();
@@ -72,14 +112,7 @@ export function PreferencesSection() {
   };
 
   if (loading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Agent Preferences</CardTitle>
-          <CardDescription>Loading preferences...</CardDescription>
-        </CardHeader>
-      </Card>
-    );
+    return <PreferencesSectionSkeleton />;
   }
 
   return (

@@ -3,11 +3,17 @@
 import { useSession } from "@/hooks/use-session";
 import { SignInButton } from "./sign-in-button";
 
-export function AuthGuard({ children }: { children: React.ReactNode }) {
+export function AuthGuard({
+  children,
+  loadingFallback,
+}: {
+  children: React.ReactNode;
+  loadingFallback?: React.ReactNode;
+}) {
   const { loading, isAuthenticated } = useSession();
 
   if (loading) {
-    return <div>Loading...</div>;
+    return <>{loadingFallback ?? <div>Loading...</div>}</>;
   }
 
   if (!isAuthenticated) {

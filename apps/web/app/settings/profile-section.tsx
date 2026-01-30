@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { useSession } from "@/hooks/use-session";
 import {
   Card,
   CardContent,
@@ -10,9 +9,52 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSession } from "@/hooks/use-session";
+
+export function ProfileSectionSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Profile</CardTitle>
+        <CardDescription>
+          Your profile information is synced from GitHub.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-16 w-16 rounded-full" />
+          <div className="space-y-2">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        </div>
+
+        <div className="grid gap-4 pt-4">
+          <div className="grid gap-2">
+            <Label>Username</Label>
+            <Skeleton className="h-4 w-32" />
+          </div>
+          <div className="grid gap-2">
+            <Label>Email</Label>
+            <Skeleton className="h-4 w-40" />
+          </div>
+          <div className="grid gap-2">
+            <Label>Name</Label>
+            <Skeleton className="h-4 w-36" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function ProfileSection() {
-  const { session } = useSession();
+  const { session, loading } = useSession();
+
+  if (loading) {
+    return <ProfileSectionSkeleton />;
+  }
 
   if (!session?.user) {
     return null;
