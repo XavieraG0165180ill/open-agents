@@ -65,6 +65,7 @@ import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
 import { useSessionChats } from "@/hooks/use-session-chats";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import { cn } from "@/lib/utils";
 import { DiffViewer } from "./diff-viewer";
 import {
   type SandboxInfo,
@@ -387,6 +388,7 @@ export function SessionChatContent() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [hasMounted, setHasMounted] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const {
@@ -395,6 +397,10 @@ export function SessionChatContent() {
     clearError: clearRecordingError,
     toggleRecording,
   } = useAudioRecording();
+
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
 
   const handleMicClick = async () => {
     clearRecordingError();
@@ -459,6 +465,7 @@ export function SessionChatContent() {
     session,
     chatInfo,
     chat,
+    initialMessages,
     sandboxInfo,
     setSandboxInfo,
     archiveSession,
@@ -502,6 +509,7 @@ export function SessionChatContent() {
     loading: chatsLoading,
     refreshChats,
   } = useSessionChats(session.id);
+  const renderMessages = hasMounted ? messages : initialMessages;
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatTitle, setEditingChatTitle] = useState("");
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
@@ -1156,8 +1164,8 @@ export function SessionChatContent() {
   // Get token usage from the most recent assistant message (current context usage)
   const tokenUsage = useMemo(() => {
     // Find the last assistant message with usage metadata
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
+    for (let i = renderMessages.length - 1; i >= 0; i--) {
+      const message = renderMessages[i];
       if (message?.role === "assistant" && message.metadata?.lastStepUsage) {
         return {
           inputTokens: message.metadata.lastStepUsage.inputTokens ?? 0,
@@ -1166,12 +1174,12 @@ export function SessionChatContent() {
       }
     }
     return { inputTokens: 0, outputTokens: 0 };
-  }, [messages]);
+  }, [renderMessages]);
 
   // Detect pending AskUserQuestion tool calls
   const { hasPendingQuestion, pendingQuestionPart, questionToolCallId } =
     useMemo(() => {
-      const lastMessage = messages[messages.length - 1];
+      const lastMessage = renderMessages[renderMessages.length - 1];
       if (lastMessage?.role === "assistant") {
         for (const p of lastMessage.parts) {
           if (
@@ -1196,7 +1204,7 @@ export function SessionChatContent() {
         pendingQuestionPart: null,
         questionToolCallId: null,
       };
-    }, [messages]);
+    }, [renderMessages]);
 
   // Handle question submission
   const handleQuestionSubmit = useCallback(
@@ -1656,8 +1664,9 @@ export function SessionChatContent() {
           <div ref={containerRef} className="h-full overflow-y-auto">
             <div className="mx-auto max-w-3xl px-4 py-8">
               <div className="space-y-6">
-                {messages.map((m, messageIndex) => {
-                  const isLastMessage = messageIndex === messages.length - 1;
+                {renderMessages.map((m, messageIndex) => {
+                  const isLastMessage =
+                    messageIndex === renderMessages.length - 1;
                   const isMessageStreaming =
                     status === "streaming" && isLastMessage;
 
@@ -1741,7 +1750,10 @@ export function SessionChatContent() {
                       return (
                         <div
                           key={`${m.id}-${i}`}
-                          className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+                          className={cn(
+                            "flex",
+                            m.role === "user" ? "justify-end" : "justify-start",
+                          )}
                         >
                           {m.role === "user" ? (
                             <div className="max-w-[80%] rounded-3xl bg-secondary px-4 py-2">
@@ -2007,7 +2019,7 @@ export function SessionChatContent() {
                     >
                       <Paperclip className="h-4 w-4" />
                     </Button>
-                    {messages.length === 0 && chatInfo.modelId ? (
+                    {renderMessages.length === 0 && chatInfo.modelId ? (
                       <div
                         className={
                           status === "streaming" || isUpdatingModel
