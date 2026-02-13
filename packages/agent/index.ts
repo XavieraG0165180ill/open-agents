@@ -1,3 +1,5 @@
+// Dynamic toolset exports
+export { getProvider, toolSets } from "./dynamic-toolsets";
 // Context management exports
 export {
   getContextLimit,

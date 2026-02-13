@@ -11,8 +11,10 @@ import { z } from "zod";
 import { addCacheControl, compactContext } from "./context-management";
 import type { SkillMetadata } from "./skills/types";
 import { buildSystemPrompt } from "./system-prompt";
+import { getProvider, toolSets } from "./dynamic-toolsets";
 import {
   askUserQuestionTool,
+  anthropicBashTool,
   bashTool,
   editFileTool,
   globTool,
@@ -57,6 +59,7 @@ const tools = {
   grep: grepTool(),
   glob: globTool(),
   bash: bashTool(),
+  bash_anthropic: anthropicBashTool(),
   task: taskTool,
   ask_user_question: askUserQuestionTool,
   skill: skillTool,
@@ -98,6 +101,13 @@ export const openHarnessAgent = new ToolLoopAgent({
       skills,
     });
 
+    // Select the right tool set based on the model provider
+    const provider = getProvider(callModel);
+    const toolNames = toolSets[provider] ?? toolSets["default"]!;
+    const activeTools = toolNames.filter(
+      (name): name is keyof typeof tools => name in tools,
+    );
+
     return {
       ...settings,
       model: callModel,
@@ -105,6 +115,7 @@ export const openHarnessAgent = new ToolLoopAgent({
         tools: settings.tools ?? tools,
         model: callModel,
       }),
+      activeTools,
       instructions,
       experimental_context: { sandbox, approval, skills, model: callModel },
     };

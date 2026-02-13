@@ -1,4 +1,5 @@
 import { tool } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import * as path from "path";
 import {
@@ -8,6 +9,7 @@ import {
   shouldAutoApprove,
 } from "./utils";
 import type { ApprovalRule } from "../types";
+import type { Sandbox } from "@open-harness/sandbox";
 
 const TIMEOUT_MS = 120_000;
 
@@ -132,46 +134,101 @@ export function commandNeedsApproval(command: string): boolean {
   return true;
 }
 
-export const bashTool = (options?: ToolOptions) =>
-  tool({
-    needsApproval: async (args, { experimental_context }) => {
-      const ctx = getApprovalContext(experimental_context, "bash");
-      const { approval } = ctx;
+// ---------------------------------------------------------------------------
+// Shared execution logic
+// ---------------------------------------------------------------------------
 
-      // Background and delegated modes auto-approve all operations
-      if (shouldAutoApprove(approval)) {
-        return false;
-      }
+export interface BashExecResult {
+  success: boolean;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  truncated?: true;
+}
 
-      // Type guard narrowed approval to interactive mode
-      // Check if command matches any saved session rules
-      if (commandMatchesApprovalRule(args.command, approval.sessionRules)) {
-        return false;
-      }
+/**
+ * Execute a bash command via the sandbox.
+ * Shared by both the custom bash tool and the Anthropic provider tool.
+ */
+export async function executeBash(
+  sandbox: Sandbox,
+  command: string,
+  cwd?: string,
+): Promise<BashExecResult> {
+  const workingDirectory = sandbox.workingDirectory;
 
-      // Need approval if cwd is outside working directory
-      if (cwdIsOutsideWorkingDirectory(args.cwd, ctx.workingDirectory)) {
-        return true;
-      }
+  const workingDir = cwd
+    ? path.isAbsolute(cwd)
+      ? cwd
+      : path.resolve(workingDirectory, cwd)
+    : workingDirectory;
 
-      // Auto-approve all bash commands when autoApprove is "all"
-      if (approval.autoApprove === "all") {
-        return false;
-      }
+  const result = await sandbox.exec(command, workingDir, TIMEOUT_MS);
 
-      // Check command safety
-      if (commandNeedsApproval(args.command)) {
-        // If command is dangerous, check user's approval setting
-        if (typeof options?.needsApproval === "function") {
-          return options.needsApproval(args);
-        }
-        return options?.needsApproval ?? true;
-      }
+  return {
+    success: result.success,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    ...(result.truncated && { truncated: true }),
+  };
+}
 
-      // Command is safe - no approval needed
-      return false;
-    },
-    description: `Execute a bash command in the user's shell (non-interactive).
+// ---------------------------------------------------------------------------
+// Shared approval logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Determine whether a bash invocation needs user approval.
+ * Shared by both the custom bash tool and the Anthropic provider tool.
+ */
+export function bashNeedsApproval(
+  args: { command: string; cwd?: string },
+  experimental_context: unknown,
+  options?: ToolOptions,
+): boolean | PromiseLike<boolean> {
+  const ctx = getApprovalContext(experimental_context, "bash");
+  const { approval } = ctx;
+
+  // Background and delegated modes auto-approve all operations
+  if (shouldAutoApprove(approval)) {
+    return false;
+  }
+
+  // Type guard narrowed approval to interactive mode
+  // Check if command matches any saved session rules
+  if (commandMatchesApprovalRule(args.command, approval.sessionRules)) {
+    return false;
+  }
+
+  // Need approval if cwd is outside working directory
+  if (cwdIsOutsideWorkingDirectory(args.cwd, ctx.workingDirectory)) {
+    return true;
+  }
+
+  // Auto-approve all bash commands when autoApprove is "all"
+  if (approval.autoApprove === "all") {
+    return false;
+  }
+
+  // Check command safety
+  if (commandNeedsApproval(args.command)) {
+    // If command is dangerous, check user's approval setting
+    if (typeof options?.needsApproval === "function") {
+      return options.needsApproval(args);
+    }
+    return options?.needsApproval ?? true;
+  }
+
+  // Command is safe - no approval needed
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Custom bash tool (used for non-Anthropic providers)
+// ---------------------------------------------------------------------------
+
+const BASH_DESCRIPTION = `Execute a bash command in the user's shell (non-interactive).
 
 WHEN TO USE:
 - Running existing project commands (build, test, lint, typecheck)
@@ -206,27 +263,42 @@ IMPORTANT:
 EXAMPLES:
 - Run the test suite: command: "npm test", cwd: "/Users/username/project"
 - Check git status: command: "git status --short"
-- List files in src: command: "ls -la", cwd: "/Users/username/project/src"`,
+- List files in src: command: "ls -la", cwd: "/Users/username/project/src"`;
+
+export const bashTool = (options?: ToolOptions) =>
+  tool({
+    needsApproval: (args, { experimental_context }) =>
+      bashNeedsApproval(args, experimental_context, options),
+    description: BASH_DESCRIPTION,
     inputSchema: bashInputSchema,
     execute: async ({ command, cwd }, { experimental_context }) => {
       const sandbox = getSandbox(experimental_context, "bash");
-      const workingDirectory = sandbox.workingDirectory;
+      return executeBash(sandbox, command, cwd);
+    },
+  });
 
-      // Resolve the working directory
-      const workingDir = cwd
-        ? path.isAbsolute(cwd)
-          ? cwd
-          : path.resolve(workingDirectory, cwd)
-        : workingDirectory;
+// ---------------------------------------------------------------------------
+// Anthropic provider bash tool (uses bash_20241022)
+// ---------------------------------------------------------------------------
 
-      const result = await sandbox.exec(command, workingDir, TIMEOUT_MS);
+/**
+ * Anthropic-native bash tool using the provider-defined `bash_20241022`.
+ * Claude has been specifically trained on this tool interface.
+ */
+export const anthropicBashTool = (options?: ToolOptions) =>
+  anthropic.tools.bash_20241022({
+    needsApproval: (args, { experimental_context }) =>
+      bashNeedsApproval(args, experimental_context, options),
+    execute: async (args, { experimental_context }) => {
+      const sandbox = getSandbox(experimental_context, "bash_anthropic");
+      const result = await executeBash(sandbox, args.command);
 
-      return {
-        success: result.success,
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        ...(result.truncated && { truncated: true }),
-      };
+      const parts: string[] = [];
+      if (result.stdout) parts.push(result.stdout);
+      if (result.stderr) parts.push(`[stderr]\n${result.stderr}`);
+      if (parts.length === 0) parts.push(`(exit code ${result.exitCode})`);
+      if (result.truncated) parts.push("[output truncated]");
+
+      return [{ type: "text" as const, text: parts.join("\n") }];
     },
   });
