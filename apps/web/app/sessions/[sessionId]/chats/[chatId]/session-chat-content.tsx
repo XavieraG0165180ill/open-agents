@@ -23,7 +23,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { ComponentProps, ReactNode } from "react";
 import {
   Children,
@@ -388,6 +388,7 @@ function SandboxInputOverlay({
 
 export function SessionChatContent() {
   const router = useRouter();
+  const pathname = usePathname();
   const [input, setInput] = useState("");
   const [isCreatingSandbox, setIsCreatingSandbox] = useState(false);
   const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
@@ -533,11 +534,16 @@ export function SessionChatContent() {
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatTitle, setEditingChatTitle] = useState("");
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
+  const [optimisticActiveChatId, setOptimisticActiveChatId] = useState<
+    string | null
+  >(null);
   const chatTitleInputRef = useRef<HTMLInputElement | null>(null);
   const lastStatusSyncAtRef = useRef(0);
   const statusSyncInFlightRef = useRef(false);
   const pendingOptimisticTitleChatIdRef = useRef<string | null>(null);
   const hasSetOptimisticTitleRef = useRef(false);
+  const pathnameRef = useRef(pathname);
+  const sidebarActiveChatIdRef = useRef<string | null>(null);
   const markReadRef = useRef<{
     lastAt: number;
     lastChatId: string | null;
@@ -624,6 +630,20 @@ export function SessionChatContent() {
     }
   }, [editingChatId]);
 
+  useEffect(() => {
+    setOptimisticActiveChatId(null);
+  }, [chatInfo.id]);
+
+  const sidebarActiveChatId = optimisticActiveChatId ?? chatInfo.id;
+
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
+
+  useEffect(() => {
+    sidebarActiveChatIdRef.current = sidebarActiveChatId;
+  }, [sidebarActiveChatId]);
+
   // Refresh chats list when the first message completes to pick up the auto-generated title
   useEffect(() => {
     if (
@@ -659,21 +679,36 @@ export function SessionChatContent() {
 
   const handleChatSwitch = useCallback(
     (nextChatId: string) => {
-      if (nextChatId === chatInfo.id) return;
+      if (nextChatId === sidebarActiveChatId) return;
+      setOptimisticActiveChatId(nextChatId);
       setMobileSidebarOpen(false);
       router.push(`/sessions/${session.id}/chats/${nextChatId}`);
     },
-    [router, session.id, chatInfo.id],
+    [router, session.id, sidebarActiveChatId],
   );
 
-  const handleCreateChat = useCallback(async () => {
+  const handleCreateChat = useCallback(() => {
+    const previousChatId = chatInfo.id;
     try {
-      const newChat = await createChat();
+      const { chat: newChat, persisted } = createChat();
+      const optimisticPath = `/sessions/${session.id}/chats/${newChat.id}`;
+      setOptimisticActiveChatId(newChat.id);
       router.push(`/sessions/${session.id}/chats/${newChat.id}`);
+      void persisted.catch((err) => {
+        console.error("Failed to create chat:", err);
+        void refreshChats();
+        if (
+          sidebarActiveChatIdRef.current === newChat.id ||
+          pathnameRef.current === optimisticPath
+        ) {
+          setOptimisticActiveChatId(previousChatId);
+          router.replace(`/sessions/${session.id}/chats/${previousChatId}`);
+        }
+      });
     } catch (err) {
       console.error("Failed to create chat:", err);
     }
-  }, [createChat, router, session.id]);
+  }, [chatInfo.id, createChat, refreshChats, router, session.id]);
 
   const handleRenameChat = useCallback(
     async (targetChatId: string, nextTitle: string) => {
@@ -1413,7 +1448,7 @@ export function SessionChatContent() {
             <div
               key={c.id}
               className={`group relative flex items-center rounded-md ${
-                c.id === chatInfo.id ? "bg-secondary" : "hover:bg-muted"
+                c.id === sidebarActiveChatId ? "bg-secondary" : "hover:bg-muted"
               }`}
             >
               {editingChatId === c.id ? (
@@ -1440,7 +1475,7 @@ export function SessionChatContent() {
                   type="button"
                   onClick={() => handleChatSwitch(c.id)}
                   className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 pr-10 text-left text-sm transition-colors ${
-                    c.id === chatInfo.id
+                    c.id === sidebarActiveChatId
                       ? "text-secondary-foreground"
                       : "text-muted-foreground group-hover:text-foreground"
                   }`}
@@ -1456,7 +1491,7 @@ export function SessionChatContent() {
                 />
               )}
               {editingChatId !== c.id &&
-                c.id !== chatInfo.id &&
+                c.id !== sidebarActiveChatId &&
                 !c.isStreaming &&
                 c.hasUnread && (
                   <span

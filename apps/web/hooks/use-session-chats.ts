@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import type { Chat } from "@/lib/db/schema";
 import { fetcher } from "@/lib/swr";
@@ -11,84 +11,339 @@ export type SessionChatListItem = Chat & {
 };
 
 interface ChatsResponse {
+  defaultModelId: string | null;
   chats: SessionChatListItem[];
 }
 
+type CreateChatResult = {
+  chat: Chat;
+  persisted: Promise<Chat>;
+};
+
+type StreamingOverlay = {
+  setAt: number;
+  seenServerStreaming: boolean;
+};
+
+type ChatOptimisticOverlay = {
+  title?: string;
+  streaming?: StreamingOverlay;
+};
+
+const STREAMING_RACE_GRACE_MS = 12_000;
+const OVERLAY_INACTIVE_TTL_MS = 5 * 60_000;
+
+// Persist optimistic chat UI state across chat route transitions.
+const sessionChatOverlays = new Map<
+  string,
+  Map<string, ChatOptimisticOverlay>
+>();
+const overlayCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearOverlayCleanup(sessionId: string): void {
+  const existingTimer = overlayCleanupTimers.get(sessionId);
+  if (!existingTimer) {
+    return;
+  }
+
+  clearTimeout(existingTimer);
+  overlayCleanupTimers.delete(sessionId);
+}
+
+function scheduleOverlayCleanup(sessionId: string): void {
+  clearOverlayCleanup(sessionId);
+  const timer = setTimeout(() => {
+    sessionChatOverlays.delete(sessionId);
+    overlayCleanupTimers.delete(sessionId);
+  }, OVERLAY_INACTIVE_TTL_MS);
+  overlayCleanupTimers.set(sessionId, timer);
+}
+
+function getSessionOverlay(
+  sessionId: string,
+): Map<string, ChatOptimisticOverlay> {
+  clearOverlayCleanup(sessionId);
+
+  const existing = sessionChatOverlays.get(sessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Map<string, ChatOptimisticOverlay>();
+  sessionChatOverlays.set(sessionId, created);
+  return created;
+}
+
+function isOverlayEmpty(overlay: ChatOptimisticOverlay): boolean {
+  return !overlay.title && !overlay.streaming;
+}
+
+function overlaysEqual(
+  left: ChatOptimisticOverlay | undefined,
+  right: ChatOptimisticOverlay,
+): boolean {
+  return (
+    left?.title === right.title &&
+    left?.streaming?.setAt === right.streaming?.setAt &&
+    left?.streaming?.seenServerStreaming ===
+      right.streaming?.seenServerStreaming
+  );
+}
+
 export function useSessionChats(sessionId: string | null) {
+  const [_overlayVersion, setOverlayVersion] = useState(0);
+  const optimisticOverlay = useMemo(
+    () => (sessionId ? getSessionOverlay(sessionId) : null),
+    [sessionId],
+  );
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+
+    clearOverlayCleanup(sessionId);
+    return () => {
+      scheduleOverlayCleanup(sessionId);
+    };
+  }, [sessionId]);
+
   const { data, error, isLoading, mutate } = useSWR<ChatsResponse>(
     sessionId ? `/api/sessions/${sessionId}/chats` : null,
     fetcher,
     {
       refreshInterval: (latestData) =>
-        latestData?.chats.some((chat) => chat.isStreaming) ? 1_000 : 5_000,
+        latestData?.chats.some((chat) => chat.isStreaming) ||
+        (optimisticOverlay
+          ? Array.from(optimisticOverlay.values()).some(
+              (overlay) => overlay.streaming,
+            )
+          : false)
+          ? 1_000
+          : 5_000,
       refreshWhenHidden: false,
       revalidateOnFocus: true,
     },
   );
 
-  const [optimisticTitles, setOptimisticTitles] = useState<
-    Record<string, string>
-  >({});
+  const updateOverlay = useCallback(
+    (
+      chatId: string,
+      updater: (overlay: ChatOptimisticOverlay) => ChatOptimisticOverlay,
+    ) => {
+      if (!optimisticOverlay || !sessionId) {
+        return;
+      }
+
+      const current = optimisticOverlay.get(chatId);
+      const next = updater(current ? { ...current } : {});
+
+      if (isOverlayEmpty(next)) {
+        if (current) {
+          optimisticOverlay.delete(chatId);
+          if (optimisticOverlay.size === 0) {
+            sessionChatOverlays.delete(sessionId);
+            clearOverlayCleanup(sessionId);
+          }
+          setOverlayVersion((value) => value + 1);
+        }
+        return;
+      }
+
+      if (overlaysEqual(current, next)) {
+        return;
+      }
+
+      if (!sessionChatOverlays.has(sessionId)) {
+        sessionChatOverlays.set(sessionId, optimisticOverlay);
+      }
+      optimisticOverlay.set(chatId, next);
+      setOverlayVersion((value) => value + 1);
+    },
+    [optimisticOverlay, sessionId],
+  );
 
   const chats = (data?.chats ?? []).map((chat) => {
-    const optimisticTitle = optimisticTitles[chat.id];
-    if (!optimisticTitle || chat.title !== "New chat") {
+    const overlay = optimisticOverlay?.get(chat.id);
+    if (!overlay) {
       return chat;
     }
-    return { ...chat, title: optimisticTitle };
+
+    let next = chat;
+    if (overlay.title && chat.title === "New chat") {
+      next = { ...next, title: overlay.title };
+    }
+    if (overlay.streaming && !chat.isStreaming) {
+      next = { ...next, isStreaming: true };
+    }
+    return next;
   });
 
   useEffect(() => {
-    if (!data) return;
-    setOptimisticTitles((current) => {
-      let next = current;
-      let changed = false;
+    if (!data || !optimisticOverlay || !sessionId) {
+      return;
+    }
 
-      for (const chat of data.chats) {
-        if (!current[chat.id]) continue;
-        if (chat.title !== "New chat") {
-          if (next === current) {
-            next = { ...current };
+    let changed = false;
+    const chatsById = new Map(data.chats.map((chat) => [chat.id, chat]));
+
+    for (const [chatId, overlay] of optimisticOverlay) {
+      const chat = chatsById.get(chatId);
+
+      if (!chat) {
+        optimisticOverlay.delete(chatId);
+        changed = true;
+        continue;
+      }
+
+      let nextOverlay = overlay;
+
+      if (overlay.title && chat.title !== "New chat") {
+        if (nextOverlay === overlay) {
+          nextOverlay = { ...overlay };
+        }
+        delete nextOverlay.title;
+      }
+
+      if (overlay.streaming) {
+        const streaming = nextOverlay.streaming ?? overlay.streaming;
+        if (chat.isStreaming) {
+          if (!streaming.seenServerStreaming) {
+            if (nextOverlay === overlay) {
+              nextOverlay = { ...overlay };
+            }
+            nextOverlay.streaming = {
+              ...streaming,
+              seenServerStreaming: true,
+            };
           }
-          delete next[chat.id];
-          changed = true;
+        } else {
+          const ageMs = Date.now() - streaming.setAt;
+          if (
+            streaming.seenServerStreaming ||
+            ageMs > STREAMING_RACE_GRACE_MS
+          ) {
+            if (nextOverlay === overlay) {
+              nextOverlay = { ...overlay };
+            }
+            delete nextOverlay.streaming;
+          }
         }
       }
 
-      return changed ? next : current;
-    });
-  }, [data]);
+      if (nextOverlay === overlay) {
+        continue;
+      }
 
-  const createChat = async () => {
+      changed = true;
+      if (isOverlayEmpty(nextOverlay)) {
+        optimisticOverlay.delete(chatId);
+      } else {
+        optimisticOverlay.set(chatId, nextOverlay);
+      }
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    if (optimisticOverlay.size === 0) {
+      sessionChatOverlays.delete(sessionId);
+      clearOverlayCleanup(sessionId);
+    }
+    setOverlayVersion((value) => value + 1);
+  }, [data, optimisticOverlay, sessionId]);
+
+  const toChatsResponse = useCallback(
+    (
+      current: ChatsResponse | undefined,
+      nextChats: SessionChatListItem[],
+    ): ChatsResponse => ({
+      defaultModelId: current?.defaultModelId ?? data?.defaultModelId ?? null,
+      chats: nextChats,
+    }),
+    [data?.defaultModelId],
+  );
+
+  const createChat = (): CreateChatResult => {
     if (!sessionId) {
       throw new Error("Missing sessionId");
     }
 
-    const res = await fetch(`/api/sessions/${sessionId}/chats`, {
-      method: "POST",
-    });
+    const now = new Date();
+    const optimisticChat: Chat = {
+      id: crypto.randomUUID(),
+      sessionId,
+      title: "New chat",
+      modelId: data?.defaultModelId ?? null,
+      activeStreamId: null,
+      lastAssistantMessageAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
 
-    const responseData = (await res.json()) as { chat?: Chat; error?: string };
-
-    if (!res.ok || !responseData.chat) {
-      throw new Error(responseData.error ?? "Failed to create chat");
-    }
-
-    await mutate(
-      (current) => ({
-        chats: [
+    void mutate(
+      (current) =>
+        toChatsResponse(current, [
           {
-            ...responseData.chat!,
+            ...optimisticChat,
             hasUnread: false,
             isStreaming: false,
           },
-          ...(current?.chats ?? []),
-        ],
-      }),
+          ...(current?.chats ?? []).filter(
+            (chat) => chat.id !== optimisticChat.id,
+          ),
+        ]),
       { revalidate: false },
     );
 
-    return responseData.chat;
+    const persisted = (async () => {
+      const res = await fetch(`/api/sessions/${sessionId}/chats`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: optimisticChat.id }),
+      });
+
+      const responseData = (await res.json()) as {
+        chat?: Chat;
+        error?: string;
+      };
+
+      if (!res.ok || !responseData.chat) {
+        await mutate(
+          (current) =>
+            toChatsResponse(
+              current,
+              (current?.chats ?? []).filter(
+                (chat) => chat.id !== optimisticChat.id,
+              ),
+            ),
+          { revalidate: false },
+        );
+        throw new Error(responseData.error ?? "Failed to create chat");
+      }
+
+      const createdChat = responseData.chat;
+
+      await mutate(
+        (current) =>
+          toChatsResponse(current, [
+            {
+              ...createdChat,
+              hasUnread: false,
+              isStreaming: false,
+            },
+            ...(current?.chats ?? []).filter(
+              (chat) => chat.id !== createdChat.id,
+            ),
+          ]),
+        { revalidate: false },
+      );
+
+      return createdChat;
+    })();
+
+    return { chat: optimisticChat, persisted };
   };
 
   const renameChat = async (chatId: string, title: string) => {
@@ -109,11 +364,13 @@ export function useSessionChats(sessionId: string | null) {
 
     const updatedChat = responseData.chat;
     await mutate(
-      (current) => ({
-        chats: (current?.chats ?? []).map((chat) =>
-          chat.id === chatId ? { ...chat, ...updatedChat } : chat,
+      (current) =>
+        toChatsResponse(
+          current,
+          (current?.chats ?? []).map((chat) =>
+            chat.id === chatId ? { ...chat, ...updatedChat } : chat,
+          ),
         ),
-      }),
       { revalidate: false },
     );
 
@@ -139,9 +396,11 @@ export function useSessionChats(sessionId: string | null) {
     }
 
     await mutate(
-      (current) => ({
-        chats: (current?.chats ?? []).filter((chat) => chat.id !== chatId),
-      }),
+      (current) =>
+        toChatsResponse(
+          current,
+          (current?.chats ?? []).filter((chat) => chat.id !== chatId),
+        ),
       { revalidate: false },
     );
   };
@@ -165,44 +424,67 @@ export function useSessionChats(sessionId: string | null) {
     }
 
     await mutate(
-      (current) => ({
-        chats: (current?.chats ?? []).map((chat) =>
-          chat.id === chatId ? { ...chat, hasUnread: false } : chat,
+      (current) =>
+        toChatsResponse(
+          current,
+          (current?.chats ?? []).map((chat) =>
+            chat.id === chatId ? { ...chat, hasUnread: false } : chat,
+          ),
         ),
-      }),
       { revalidate: false },
     );
   };
 
   const setChatStreaming = async (chatId: string, isStreaming: boolean) => {
+    if (isStreaming) {
+      updateOverlay(chatId, (overlay) => ({
+        ...overlay,
+        streaming: {
+          setAt: Date.now(),
+          seenServerStreaming: false,
+        },
+      }));
+    } else {
+      updateOverlay(chatId, (overlay) => {
+        const next = { ...overlay };
+        delete next.streaming;
+        return next;
+      });
+    }
+
     await mutate(
       (current) => {
         if (!current) {
           return current;
         }
 
-        return {
-          chats: current.chats.map((chat) =>
+        return toChatsResponse(
+          current,
+          current.chats.map((chat) =>
             chat.id === chatId ? { ...chat, isStreaming } : chat,
           ),
-        };
+        );
       },
       { revalidate: false },
     );
   };
 
-  const setChatTitle = async (chatId: string, title: string) => {
-    setOptimisticTitles((current) => ({ ...current, [chatId]: title }));
+  const setChatTitle = (chatId: string, title: string) => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      return;
+    }
+
+    updateOverlay(chatId, (overlay) => ({
+      ...overlay,
+      title: trimmedTitle,
+    }));
   };
 
-  const clearChatTitle = async (chatId: string) => {
-    setOptimisticTitles((current) => {
-      if (!current[chatId]) {
-        return current;
-      }
-
-      const next = { ...current };
-      delete next[chatId];
+  const clearChatTitle = (chatId: string) => {
+    updateOverlay(chatId, (overlay) => {
+      const next = { ...overlay };
+      delete next.title;
       return next;
     });
   };
