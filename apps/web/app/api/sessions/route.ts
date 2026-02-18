@@ -1,9 +1,14 @@
 import { nanoid } from "nanoid";
+import { after } from "next/server";
 import {
   createSessionWithInitialChat,
   getSessionsByUserId,
 } from "@/lib/db/sessions";
 import { getUserPreferences } from "@/lib/db/user-preferences";
+import { parseGitHubUrl } from "@/lib/github/client";
+import { getRepoToken } from "@/lib/github/get-repo-token";
+import { getUserGitHubToken } from "@/lib/github/user-token";
+import { createSandboxForSession } from "@/lib/sandbox/create";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 interface CreateSessionRequest {
@@ -79,6 +84,27 @@ export async function POST(req: Request) {
     finalBranch = generateBranchName(session.user.username, session.user.name);
   }
 
+  // Resolve GitHub token early so we can pass it to background provisioning.
+  // Failures here are non-fatal -- the client can still trigger sandbox
+  // creation later via POST /api/sandbox.
+  let githubToken: string | null = null;
+  if (cloneUrl) {
+    const parsedRepo = parseGitHubUrl(cloneUrl);
+    if (parsedRepo) {
+      try {
+        const tokenResult = await getRepoToken(
+          session.user.id,
+          parsedRepo.owner,
+        );
+        githubToken = tokenResult.token;
+      } catch {
+        // Fall through -- token resolution will be retried by the client path
+      }
+    }
+  } else {
+    githubToken = await getUserGitHubToken();
+  }
+
   try {
     const title = resolveSessionTitle(body);
     const preferences = await getUserPreferences(session.user.id);
@@ -102,6 +128,39 @@ export async function POST(req: Request) {
         title: "New chat",
         modelId: preferences.defaultModelId,
       },
+    });
+
+    // Kick off sandbox provisioning in the background so it starts spinning up
+    // before the browser finishes navigating to the new session page.
+    const sessionId = result.session.id;
+    const gitUser = {
+      name: session.user.name ?? session.user.username,
+      email:
+        session.user.email ??
+        `${session.user.username}@users.noreply.vercel.app`,
+    };
+
+    after(async () => {
+      try {
+        await createSandboxForSession({
+          repoUrl: cloneUrl ?? undefined,
+          branch: finalBranch ?? undefined,
+          isNewBranch: isNewBranch ?? false,
+          sessionId,
+          sandboxType,
+          githubToken,
+          gitUser,
+        });
+        console.log(
+          `[Session] Background sandbox provisioning completed for session ${sessionId}`,
+        );
+      } catch (error) {
+        // Non-fatal: the client auto-create effect will retry
+        console.error(
+          `[Session] Background sandbox provisioning failed for session ${sessionId}:`,
+          error,
+        );
+      }
     });
 
     return Response.json(result);

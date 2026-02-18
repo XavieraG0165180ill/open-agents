@@ -1,15 +1,10 @@
-import {
-  connectSandbox,
-  type FileEntry,
-  type SandboxState,
-} from "@open-harness/sandbox";
-import { after } from "next/server";
+import { connectSandbox, type SandboxState } from "@open-harness/sandbox";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
 import { parseGitHubUrl } from "@/lib/github/client";
 import { getRepoToken } from "@/lib/github/get-repo-token";
-import { downloadAndExtractTarball } from "@/lib/github/tarball";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import { createSandboxForSession } from "@/lib/sandbox/create";
 import {
   buildActiveLifecycleUpdate,
   getNextLifecycleVersion,
@@ -17,21 +12,6 @@ import {
 import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
 import { canOperateOnSandbox, clearSandboxState } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
-
-const WORKING_DIR = "/vercel/sandbox";
-
-/**
- * Convert simple file strings to FileEntry format.
- */
-function toFileEntries(
-  files: Record<string, string>,
-): Record<string, FileEntry> {
-  const entries: Record<string, FileEntry> = {};
-  for (const [path, content] of Object.entries(files)) {
-    entries[path] = { type: "file", content };
-  }
-  return entries;
-}
 
 interface CreateSandboxRequest {
   repoUrl?: string;
@@ -148,143 +128,24 @@ export async function POST(req: Request) {
   // ============================================
   // NEW SANDBOX: Create based on sandboxType
   // ============================================
-  const startTime = Date.now();
-
-  // Download and extract tarball if repo provided (needed for hybrid and just-bash)
-  let files: Record<string, FileEntry> = {};
-  if (repoUrl && (sandboxType === "hybrid" || sandboxType === "just-bash")) {
-    let tarballResult;
-    try {
-      tarballResult = await downloadAndExtractTarball(
-        repoUrl,
-        branch,
-        githubToken ?? undefined,
-        WORKING_DIR,
-      );
-    } catch {
-      // Retry without token for public repos
-      tarballResult = await downloadAndExtractTarball(
-        repoUrl,
-        branch,
-        undefined,
-        WORKING_DIR,
-      );
-    }
-    files = toFileEntries(tarballResult.files);
+  if (!sessionId) {
+    return Response.json(
+      { error: "sessionId is required for sandbox creation" },
+      { status: 400 },
+    );
   }
 
-  const source = repoUrl
-    ? {
-        repo: repoUrl,
-        branch: isNewBranch ? undefined : branch,
-        token: githubToken ?? undefined,
-      }
-    : undefined;
-
-  let sandbox;
-
-  if (sandboxType === "just-bash") {
-    // Local-only sandbox
-    sandbox = await connectSandbox({
-      state: {
-        type: "just-bash",
-        files,
-        workingDirectory: WORKING_DIR,
-        source,
-      },
-      options: { env },
-    });
-  } else if (sandboxType === "vercel") {
-    // Cloud-first sandbox
-    sandbox = await connectSandbox({
-      state: {
-        type: "vercel",
-        source,
-      },
-      options: {
-        env,
-        gitUser,
-        timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-      },
-    });
-  } else {
-    // Default: hybrid sandbox (local first, then cloud)
-    sandbox = await connectSandbox({
-      state: {
-        type: "hybrid",
-        files,
-        workingDirectory: WORKING_DIR,
-        source,
-      },
-      options: {
-        env,
-        gitUser,
-        timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-        scheduleBackgroundWork: (cb) => after(cb),
-        hooks: sessionId
-          ? {
-              onCloudSandboxReady: async (sandboxId) => {
-                const currentSession = await getSessionById(sessionId);
-                if (currentSession?.sandboxState?.type === "hybrid") {
-                  const nextState: SandboxState = { type: "hybrid", sandboxId };
-                  await updateSession(sessionId, {
-                    sandboxState: nextState,
-                    lifecycleVersion: getNextLifecycleVersion(
-                      currentSession.lifecycleVersion,
-                    ),
-                    ...buildActiveLifecycleUpdate(nextState),
-                  });
-                  console.log(
-                    `[Sandbox] Cloud sandbox ready for session ${sessionId}: ${sandboxId}`,
-                  );
-
-                  kickSandboxLifecycleWorkflow({
-                    sessionId,
-                    reason: "cloud-ready",
-                  });
-                }
-              },
-              onCloudSandboxFailed: async (error) => {
-                await updateSession(sessionId, {
-                  lifecycleState: "failed",
-                  lifecycleError: error.message,
-                });
-                console.error(
-                  `[Sandbox] Cloud sandbox failed for session ${sessionId}:`,
-                  error.message,
-                );
-              },
-            }
-          : undefined,
-      },
-    });
-  }
-
-  if (sessionId && sandbox.getState) {
-    const nextState = sandbox.getState() as SandboxState;
-    await updateSession(sessionId, {
-      sandboxState: nextState,
-      lifecycleVersion: getNextLifecycleVersion(
-        sessionRecord?.lifecycleVersion,
-      ),
-      ...buildActiveLifecycleUpdate(nextState),
-    });
-
-    kickSandboxLifecycleWorkflow({
-      sessionId,
-      reason: "sandbox-created",
-    });
-  }
-
-  const readyMs = Date.now() - startTime;
-
-  return Response.json({
-    createdAt: Date.now(),
-    timeout: sandboxType === "just-bash" ? null : DEFAULT_SANDBOX_TIMEOUT_MS,
-    currentBranch: repoUrl ? branch : undefined,
-    mode: sandboxType,
-    timing: { readyMs },
+  const result = await createSandboxForSession({
+    repoUrl,
+    branch,
+    isNewBranch,
+    sessionId,
+    sandboxType,
+    githubToken,
+    gitUser,
   });
+
+  return Response.json(result);
 }
 
 export async function DELETE(req: Request) {

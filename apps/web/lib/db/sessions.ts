@@ -84,6 +84,35 @@ export async function updateSession(
   return session;
 }
 
+/**
+ * Atomically claims sandbox provisioning by incrementing lifecycleVersion
+ * only when it matches the expected value. Returns true if this caller won
+ * the race; false if another caller already incremented past the expected
+ * version.
+ *
+ * This prevents duplicate sandbox creation when the background after()
+ * and the client POST /api/sandbox race.
+ */
+export async function claimSandboxProvisioning(
+  sessionId: string,
+  expectedVersion: number,
+): Promise<boolean> {
+  const [updated] = await db
+    .update(sessions)
+    .set({
+      lifecycleVersion: expectedVersion + 1,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.lifecycleVersion, expectedVersion),
+      ),
+    )
+    .returning({ id: sessions.id });
+  return Boolean(updated);
+}
+
 export async function deleteSession(sessionId: string) {
   await db.delete(sessions).where(eq(sessions.id, sessionId));
 }

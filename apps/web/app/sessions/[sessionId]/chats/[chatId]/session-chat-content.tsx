@@ -1290,6 +1290,11 @@ export function SessionChatContent() {
 
   // Auto-create sandbox right away for new sessions/chats.
   // Skip for archived sessions.
+  // When background provisioning is in progress (server kicked off sandbox
+  // creation via after()), the reconnect probe returns "no_sandbox" because
+  // the sandbox state hasn't been written to DB yet, but lifecycleTiming.state
+  // will be "active" (the provisioning claim bumps it). In that case, retry
+  // the reconnect probe instead of creating a duplicate sandbox.
   useEffect(() => {
     if (isArchived) return;
     if (sandboxInfo || isCreatingSandbox || isRestoringSnapshot) return;
@@ -1307,6 +1312,19 @@ export function SessionChatContent() {
       return;
     }
 
+    // Background provisioning in flight: the server already claimed sandbox
+    // creation (lifecycleState moved to "active") but the sandbox state isn't
+    // in the DB yet. Retry the reconnect probe after a short delay.
+    if (
+      reconnectionStatus === "no_sandbox" &&
+      lifecycleTiming.state === "active"
+    ) {
+      const timer = setTimeout(() => {
+        void attemptReconnection();
+      }, 1_500);
+      return () => clearTimeout(timer);
+    }
+
     if (hasAutoStartedSandboxRef.current) return;
     hasAutoStartedSandboxRef.current = true;
 
@@ -1320,6 +1338,8 @@ export function SessionChatContent() {
     isCreatingSandbox,
     isRestoringSnapshot,
     ensureSandboxReady,
+    lifecycleTiming.state,
+    attemptReconnection,
   ]);
 
   // Track tool completions to trigger diff refresh
