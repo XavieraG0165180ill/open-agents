@@ -1,6 +1,9 @@
 import { connectSandbox } from "@open-harness/sandbox";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
-import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import {
+  DEFAULT_SANDBOX_PORTS,
+  DEFAULT_SANDBOX_TIMEOUT_MS,
+} from "@/lib/sandbox/config";
 import {
   buildActiveLifecycleUpdate,
   buildHibernatedLifecycleUpdate,
@@ -166,7 +169,10 @@ export async function PUT(req: Request) {
     // which would cause connectSandbox to reconnect instead of restore
     const sandbox = await connectSandbox(
       { type: sandboxType, snapshotId: sessionRecord.snapshotUrl },
-      { timeout: DEFAULT_SANDBOX_TIMEOUT_MS },
+      {
+        timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+        ports: DEFAULT_SANDBOX_PORTS,
+      },
     );
 
     // Update session with new sandbox state
