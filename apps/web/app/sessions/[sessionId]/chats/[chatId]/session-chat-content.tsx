@@ -11,6 +11,7 @@ import {
   Copy,
   ExternalLink,
   FolderGit2,
+  GitCommit,
   GitCompare,
   GitPullRequest,
   Link2,
@@ -584,7 +585,10 @@ export function SessionChatContent() {
   const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
   const [isUnarchiving, setIsUnarchiving] = useState(false);
   const [prDialogOpen, setPrDialogOpen] = useState(false);
+  const [prDialogCommitPushMode, setPrDialogCommitPushMode] = useState(false);
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
+  const [hasUncommittedChangesAfterPr, setHasUncommittedChangesAfterPr] =
+    useState(false);
   const [showDiffPanel, setShowDiffPanel] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -877,6 +881,32 @@ export function SessionChatContent() {
       refreshChats();
     }
   }, [hadInitialMessages, status, messages, refreshChats]);
+
+  // Check for uncommitted changes after each AI response completes (when PR already exists)
+  const prevGitCheckStatusRef = useRef(status);
+  useEffect(() => {
+    const wasInFlight = prevGitCheckStatusRef.current !== "ready";
+    prevGitCheckStatusRef.current = status;
+
+    if (wasInFlight && status === "ready" && session?.prNumber && sandboxInfo) {
+      fetch("/api/git-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: session.id }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && isMountedRef.current) {
+            setHasUncommittedChangesAfterPr(
+              data.hasUncommittedChanges ?? false,
+            );
+          }
+        })
+        .catch(() => {
+          // Silently ignore - non-critical check
+        });
+    }
+  }, [status, session?.prNumber, session?.id, sandboxInfo]);
 
   useEffect(() => {
     void requestMarkChatReadRef.current("force");
@@ -1842,24 +1872,43 @@ export function SessionChatContent() {
             {session?.cloneUrl ? (
               // Session has a repo - show PR buttons
               session?.prNumber ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const prUrl = `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
-                    window.open(prUrl, "_blank", "noopener,noreferrer");
-                  }}
-                >
-                  <GitPullRequest className="h-4 w-4 md:mr-2" />
-                  <span className="hidden md:inline">
-                    View PR #{session.prNumber}
-                  </span>
-                </Button>
+                hasUncommittedChangesAfterPr ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setPrDialogCommitPushMode(true);
+                      setPrDialogOpen(true);
+                    }}
+                  >
+                    <GitCommit className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">
+                      Commit &amp; Push
+                    </span>
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const prUrl = `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
+                      window.open(prUrl, "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    <GitPullRequest className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">
+                      View PR #{session.prNumber}
+                    </span>
+                  </Button>
+                )
               ) : (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPrDialogOpen(true)}
+                  onClick={() => {
+                    setPrDialogCommitPushMode(false);
+                    setPrDialogOpen(true);
+                  }}
                   disabled={!session?.branch}
                 >
                   <GitPullRequest className="h-4 w-4 md:mr-2" />
@@ -2390,11 +2439,20 @@ export function SessionChatContent() {
       {session && (
         <CreatePRDialog
           open={prDialogOpen}
-          onOpenChange={setPrDialogOpen}
+          onOpenChange={(open) => {
+            setPrDialogOpen(open);
+            if (!open) {
+              setPrDialogCommitPushMode(false);
+            }
+          }}
           session={session}
           hasSandbox={sandboxInfo !== null}
+          commitAndPushMode={prDialogCommitPushMode}
           onPrDetected={(pr) => {
             updateSessionPullRequest(pr);
+          }}
+          onPushComplete={() => {
+            setHasUncommittedChangesAfterPr(false);
           }}
         />
       )}

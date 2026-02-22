@@ -35,10 +35,14 @@ interface CreatePRDialogProps {
   onOpenChange: (open: boolean) => void;
   session: Session;
   hasSandbox: boolean;
+  /** When true, the dialog starts at the commit step and ends after push (no PR creation). */
+  commitAndPushMode?: boolean;
   onPrDetected?: (info: {
     prNumber: number;
     prStatus: "open" | "merged" | "closed";
   }) => void;
+  /** Called after a successful commit & push in commitAndPushMode. */
+  onPushComplete?: () => void;
 }
 
 interface GitActions {
@@ -82,7 +86,9 @@ export function CreatePRDialog({
   onOpenChange,
   session,
   hasSandbox,
+  commitAndPushMode = false,
   onPrDetected,
+  onPushComplete,
 }: CreatePRDialogProps) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -175,7 +181,10 @@ export function CreatePRDialog({
 
   useEffect(() => {
     if (!isCheckingStatus && open) {
-      if (needsNewBranch) {
+      if (commitAndPushMode) {
+        // In commit & push mode, always start at commit step
+        setStep("commit");
+      } else if (needsNewBranch) {
         setStep("create-branch");
       } else if (hasUncommittedChanges) {
         setStep("commit");
@@ -183,7 +192,7 @@ export function CreatePRDialog({
         setStep("generate");
       }
     }
-  }, [isCheckingStatus, open, needsNewBranch, hasUncommittedChanges]);
+  }, [isCheckingStatus, open, needsNewBranch, hasUncommittedChanges, commitAndPushMode]);
 
   const fetchBranches = useCallback(async () => {
     setIsLoadingBranches(true);
@@ -295,9 +304,16 @@ export function CreatePRDialog({
       if (data.branchName && data.branchName !== "HEAD") {
         setResolvedBranch(data.branchName as string);
       }
-      // Advance to generate step
       setHasUncommittedChanges(false);
-      setStep("generate");
+      if (commitAndPushMode) {
+        // In commit & push mode, we're done — show success with View PR link
+        const prUrl = `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
+        setResult({ prUrl });
+        onPushComplete?.();
+      } else {
+        // Advance to generate step
+        setStep("generate");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to commit changes");
     } finally {
@@ -426,7 +442,11 @@ export function CreatePRDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create Pull Request</DialogTitle>
+          <DialogTitle>
+              {commitAndPushMode
+                ? "Commit & Push Changes"
+                : "Create Pull Request"}
+            </DialogTitle>
           <DialogDescription>
             {session.repoOwner}/{session.repoName} - {displayBranch}
           </DialogDescription>
@@ -440,9 +460,11 @@ export function CreatePRDialog({
             </div>
             <div className="text-center">
               <p className="font-medium">
-                {result.requiresManualCreation
-                  ? "Open GitHub to create the pull request"
-                  : "Pull request created successfully!"}
+                {commitAndPushMode
+                  ? "Changes pushed to PR successfully!"
+                  : result.requiresManualCreation
+                    ? "Open GitHub to create the pull request"
+                    : "Pull request created successfully!"}
               </p>
               {/* External link to GitHub - not internal navigation */}
               {/* oxlint-disable-next-line nextjs/no-html-link-for-pages */}
@@ -452,9 +474,11 @@ export function CreatePRDialog({
                 rel="noopener noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-sm text-blue-500 hover:underline"
               >
-                {result.requiresManualCreation
-                  ? "Open compare page"
-                  : "View on GitHub"}
+                {commitAndPushMode
+                  ? `View PR #${session.prNumber}`
+                  : result.requiresManualCreation
+                    ? "Open compare page"
+                    : "View on GitHub"}
                 <ExternalLink className="h-3 w-3" />
               </a>
             </div>
@@ -516,7 +540,9 @@ export function CreatePRDialog({
                         : "Uncommitted changes detected"}
                     </p>
                     <p className="text-muted-foreground">
-                      Commit your changes before creating a pull request.
+                      {commitAndPushMode
+                        ? "Commit and push your changes to the existing PR."
+                        : "Commit your changes before creating a pull request."}
                     </p>
                   </div>
                 </div>
@@ -626,8 +652,12 @@ export function CreatePRDialog({
                   {isCommitting ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Committing...
+                      {commitAndPushMode
+                        ? "Committing & pushing..."
+                        : "Committing..."}
                     </>
+                  ) : commitAndPushMode ? (
+                    "Commit & push"
                   ) : (
                     "Commit changes"
                   )}
