@@ -110,6 +110,31 @@ const STREAM_RECOVERY_STALL_MS = 4_000;
 const STREAM_RECOVERY_MIN_INTERVAL_MS = 8_000;
 
 const emptySubscribe = () => () => {};
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isChatStreamingProbeResponse(value: unknown): value is {
+  chats: { id: string; isStreaming: boolean }[];
+} {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  const chats = value["chats"];
+  if (!Array.isArray(chats)) {
+    return false;
+  }
+
+  return chats.every(
+    (chat) =>
+      isObjectRecord(chat) &&
+      typeof chat["id"] === "string" &&
+      typeof chat["isStreaming"] === "boolean",
+  );
+}
+
 function useHasMounted() {
   return useSyncExternalStore(
     emptySubscribe,
@@ -742,32 +767,36 @@ export function SessionChatContent() {
   const hasSeenAssistantRenderableContentRef = useRef(false);
   const [hasPendingResponse, setHasPendingResponse] = useState(false);
 
+  // Sync hasPendingResponse with the AI SDK status.
+  // IMPORTANT: hasPendingResponse is intentionally excluded from the dependency
+  // array. The form submit handler sets it to true optimistically (before
+  // sendMessage is called), and including it here would cause the effect to
+  // immediately clear it because status is still "ready" at that point —
+  // resulting in a visible flicker of the thinking indicator and stop button.
   useEffect(() => {
-    if (isChatInFlight && !hasPendingResponse) {
+    if (isChatInFlight) {
       setHasPendingResponse(true);
       return;
     }
 
-    if (status === "error") {
-      if (hasPendingResponse) {
-        setHasPendingResponse(false);
-      }
-      return;
+    if (status === "error" || status === "ready") {
+      setHasPendingResponse(false);
     }
-
-    if (status === "ready") {
-      if (hasPendingResponse) {
-        setHasPendingResponse(false);
-      }
-    }
-  }, [isChatInFlight, status, hasPendingResponse]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
+  }, [isChatInFlight, status]);
 
   useEffect(() => {
     if (!isChatInFlight && !hasPendingResponse) {
       hasSeenAssistantRenderableContentRef.current = false;
       return;
     }
-    if (hasAssistantRenderableContent) {
+    // Only mark content as "seen" once we're actually in-flight — not during
+    // the optimistic pending phase where messages are still stale from the
+    // previous turn (due to experimental_throttle).  Without this guard the
+    // ref gets set to true from the *old* assistant message, which causes the
+    // thinking indicator to disappear prematurely when the new (empty)
+    // assistant message arrives.
+    if (isChatInFlight && hasAssistantRenderableContent) {
       hasSeenAssistantRenderableContentRef.current = true;
     }
   }, [isChatInFlight, hasPendingResponse, hasAssistantRenderableContent]);
@@ -776,15 +805,27 @@ export function SessionChatContent() {
     hasAssistantRenderableContent ||
     hasSeenAssistantRenderableContentRef.current;
   const effectiveStatus = hasPendingResponse ? "streaming" : status;
-  const showThinkingIndicator = useMemo(
-    () =>
-      shouldShowThinkingIndicator({
-        status: effectiveStatus,
-        hasAssistantRenderableContent: hasSeenAssistantRenderableContent,
-        lastMessageRole: lastMessage?.role,
-      }),
-    [effectiveStatus, hasSeenAssistantRenderableContent, lastMessage?.role],
-  );
+  const showThinkingIndicator = useMemo(() => {
+    // During the optimistic pending phase (user just clicked send but the
+    // AI SDK status hasn't caught up yet due to throttling), always show
+    // the thinking indicator.  The messages are stale at this point so
+    // shouldShowThinkingIndicator would make the wrong decision based on
+    // the previous turn's content.
+    if (hasPendingResponse && !isChatInFlight) {
+      return true;
+    }
+    return shouldShowThinkingIndicator({
+      status: effectiveStatus,
+      hasAssistantRenderableContent: hasSeenAssistantRenderableContent,
+      lastMessageRole: lastMessage?.role,
+    });
+  }, [
+    effectiveStatus,
+    hasSeenAssistantRenderableContent,
+    lastMessage?.role,
+    hasPendingResponse,
+    isChatInFlight,
+  ]);
   const groupedRenderMessages = useMemo<GroupedRenderMessage[]>(() => {
     return renderMessages.map((message, messageIndex) => {
       const groups: MessageRenderGroup[] = [];
@@ -844,6 +885,7 @@ export function SessionChatContent() {
   });
   const inFlightStartedAtRef = useRef<number | null>(null);
   const lastStreamRecoveryAtRef = useRef(0);
+  const streamRecoveryProbeInFlightRef = useRef(false);
 
   const requestStatusSync = useCallback(
     async (mode: "normal" | "force" = "normal"): Promise<void> => {
@@ -947,7 +989,7 @@ export function SessionChatContent() {
     };
   }, [requestMarkChatRead]);
 
-  // Keep the recovery logic in a ref so event-listener and timer effects never
+  // Keep the recovery logic in a ref so event-listener effects never
   // churn during streaming.  The ref is updated on every render (cheap) while
   // the stable wrapper below keeps a constant identity for effects.
   const maybeRecoverStreamRef = useRef(() => {});
@@ -960,18 +1002,50 @@ export function SessionChatContent() {
       return;
     }
 
-    if (status === "error") {
+    if (status !== "error") {
+      if (!isChatInFlight || hasAssistantRenderableContent) {
+        return;
+      }
+
+      const startedAt = inFlightStartedAtRef.current;
+      if (startedAt === null || now - startedAt < STREAM_RECOVERY_STALL_MS) {
+        return;
+      }
+      if (streamRecoveryProbeInFlightRef.current) {
+        return;
+      }
+
+      streamRecoveryProbeInFlightRef.current = true;
       lastStreamRecoveryAtRef.current = now;
-      retryChatStream({ auto: true });
-      return;
-    }
 
-    if (!isChatInFlight || hasAssistantRenderableContent) {
-      return;
-    }
+      void (async () => {
+        try {
+          const response = await fetch(`/api/sessions/${session.id}/chats`, {
+            cache: "no-store",
+          });
+          if (!response.ok) {
+            return;
+          }
 
-    const startedAt = inFlightStartedAtRef.current;
-    if (startedAt === null || now - startedAt < STREAM_RECOVERY_STALL_MS) {
+          const payload: unknown = await response.json();
+          if (!isChatStreamingProbeResponse(payload)) {
+            return;
+          }
+
+          const serverChat = payload.chats.find(
+            (chat) => chat.id === chatInfo.id,
+          );
+          if (!serverChat?.isStreaming) {
+            return;
+          }
+
+          retryChatStream({ auto: true, strategy: "soft" });
+        } catch {
+          // Ignore transient probe failures and try again on next interval.
+        } finally {
+          streamRecoveryProbeInFlightRef.current = false;
+        }
+      })();
       return;
     }
 
@@ -996,9 +1070,8 @@ export function SessionChatContent() {
     inFlightStartedAtRef.current = null;
   }, [isChatInFlight, chatInfo.id]);
 
-  // Recover from transient connection drops when the tab regains visibility,
-  // the network comes back, or a stream remains in-flight without any visible
-  // assistant output for too long.  The listeners are registered once because
+  // Recover from transient connection drops when the tab regains visibility
+  // or the network comes back. The listeners are registered once because
   // maybeRecoverStream has a stable identity (delegates to a ref internally).
   useEffect(() => {
     const onVisible = () => {
@@ -2161,9 +2234,7 @@ export function SessionChatContent() {
               )}
               {showThinkingIndicator && (
                 <div className="flex justify-start">
-                  <p className="animate-pulse text-sm font-medium text-muted-foreground">
-                    Thinking...
-                  </p>
+                  <ThinkingBlock text="" isStreaming />
                 </div>
               )}
             </div>
@@ -2278,6 +2349,7 @@ export function SessionChatContent() {
                   void setChatTitle(chatInfo.id, nextTitle);
                 }
                 setHasPendingResponse(true);
+                hasSeenAssistantRenderableContentRef.current = false;
                 void setChatStreaming(chatInfo.id, true);
                 try {
                   await sendMessage({ text: messageText, files });
@@ -2454,7 +2526,7 @@ export function SessionChatContent() {
                     )}
                   </Button>
 
-                  {isChatInFlight ? (
+                  {isChatInFlight || hasPendingResponse ? (
                     <Button
                       type="button"
                       size="icon"
@@ -2463,6 +2535,7 @@ export function SessionChatContent() {
                           method: "POST",
                         }).catch(() => {});
                         stopChatStream();
+                        setHasPendingResponse(false);
                       }}
                       className="h-8 w-8 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       style={{ touchAction: "manipulation" }}
