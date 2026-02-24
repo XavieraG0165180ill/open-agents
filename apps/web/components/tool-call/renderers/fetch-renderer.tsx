@@ -9,7 +9,8 @@ export function FetchRenderer({
   onApprove,
   onDeny,
 }: ToolRendererProps<"tool-web_fetch">) {
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const url = input?.url ?? "...";
   const method = input?.method ?? "GET";
 

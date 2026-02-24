@@ -18,7 +18,8 @@ export function WriteRenderer({
   onDeny,
 }: ToolRendererProps<"tool-write">) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const rawFilePath = input?.filePath ?? "...";
   const filePath =
     rawFilePath === "..." ? rawFilePath : toRelativePath(rawFilePath, cwd);

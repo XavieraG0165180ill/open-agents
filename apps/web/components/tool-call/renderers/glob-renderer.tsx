@@ -25,7 +25,8 @@ export function GlobRenderer({
   onApprove,
   onDeny,
 }: ToolRendererProps<"tool-glob">) {
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const pattern = input?.pattern ?? "...";
   const path = input?.path;
 

@@ -11,7 +11,8 @@ export function ReadRenderer({
   onApprove,
   onDeny,
 }: ToolRendererProps<"tool-read">) {
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const rawFilePath = input?.filePath ?? "...";
   const filePath =
     rawFilePath === "..." ? rawFilePath : toRelativePath(rawFilePath, cwd);

@@ -10,7 +10,8 @@ export function TodoRenderer({
   state,
 }: ToolRendererProps<"tool-todo_write">) {
   const [isExpanded, setIsExpanded] = useState(true);
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const todos = input?.todos ?? [];
   const keyPrefix = part.toolCallId ?? "todo";
 

@@ -30,7 +30,8 @@ export function GrepRenderer({
   onApprove,
   onDeny,
 }: ToolRendererProps<"tool-grep">) {
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const pattern = input?.pattern ?? "...";
   const path = input?.path;
   const include = input?.glob;

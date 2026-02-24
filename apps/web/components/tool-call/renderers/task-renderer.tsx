@@ -48,6 +48,10 @@ function getRelevantPartRenderEntries(
 }
 
 function getToolSummary(part: SubagentMessagePart): string {
+  if (!isToolUIPart(part) || part.state === "input-streaming") {
+    return "";
+  }
+
   switch (part.type) {
     case "tool-read":
     case "tool-write":
@@ -125,7 +129,7 @@ function SubagentToolCall({
         ) : null}
       </div>
       {/* Show full input in expanded mode */}
-      {expanded && (
+      {expanded && part.state !== "input-streaming" && (
         <pre className="ml-4 mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-foreground">
           {JSON.stringify(part.input, null, 2)}
         </pre>
@@ -141,7 +145,8 @@ export function TaskRenderer({
   onDeny,
 }: ToolRendererProps<"tool-task">) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const input = part.input;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
   const desc = input?.task ?? "Spawning subagent";
   const fullPrompt = input?.instructions;
   const subagentType = input?.subagentType;

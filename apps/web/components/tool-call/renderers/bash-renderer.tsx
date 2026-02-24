@@ -14,10 +14,11 @@ export function BashRenderer({
   onDeny,
 }: ToolRendererProps<"tool-bash">) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const input = part.input;
-  const command = String(input?.command ?? "");
-  const cwd = input?.cwd;
-  const isDetached = input?.detached === true;
+  const isInputReady = part.state !== "input-streaming";
+  const input = isInputReady ? part.input : undefined;
+  const command = isInputReady ? String(input?.command ?? "") : "";
+  const cwd = isInputReady ? input?.cwd : undefined;
+  const isDetached = isInputReady && input?.detached === true;
 
   const output = part.state === "output-available" ? part.output : undefined;
   const exitCode = output?.exitCode;
