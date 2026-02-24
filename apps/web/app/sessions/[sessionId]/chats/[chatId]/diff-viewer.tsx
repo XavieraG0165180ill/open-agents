@@ -129,7 +129,7 @@ function FileEntry({
   const isGenerated = file.generated === true;
 
   return (
-    <div className="border-b border-border last:border-b-0">
+    <div className="min-w-0 border-b border-border last:border-b-0">
       <button
         type="button"
         onClick={isGenerated ? undefined : onToggle}
@@ -172,7 +172,7 @@ function FileEntry({
       </button>
 
       {isExpanded && !isGenerated && (
-        <div className="border-t border-border">
+        <div className="overflow-x-auto border-t border-border">
           {file.diff ? (
             <PatchDiff key={diffStyle} patch={file.diff} options={options} />
           ) : (
@@ -327,7 +327,7 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
         {/* Content */}
         <div
           className={cn(
-            "min-h-0 flex-1 overflow-y-auto",
+            "min-h-0 min-w-0 flex-1 overflow-auto",
             showStaleIndicator && "opacity-90",
           )}
         >
