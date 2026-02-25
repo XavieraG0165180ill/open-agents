@@ -4,6 +4,7 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from "ai";
+import { nanoid } from "nanoid";
 import { getWritable } from "workflow";
 
 export interface DurableAgentCallOptions {
@@ -108,8 +109,6 @@ async function runChatStep(
 
   const { webAgent } = await import("@/app/config");
 
-  let responseMessage: UIMessage | null = null;
-
   const result = await webAgent.stream({
     messages,
     options: {
@@ -118,7 +117,10 @@ async function runChatStep(
     } as never,
   });
 
+  let responseMessage: UIMessage | null = null;
+
   const stream = result.toUIMessageStream<UIMessage>({
+    generateMessageId: () => nanoid(),
     onFinish: ({ responseMessage: finishedMessage }) => {
       responseMessage = finishedMessage;
     },
