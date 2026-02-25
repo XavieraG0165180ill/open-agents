@@ -2292,29 +2292,31 @@ export function SessionChatContent() {
                                 >
                                   {p.text}
                                 </Streamdown>
-                                <div>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                    onClick={() =>
-                                      void copyAssistantMessageText(
-                                        `${m.id}-${group.renderKey}`,
-                                        p.text,
-                                      )
-                                    }
-                                    disabled={p.text.trim().length === 0}
-                                    aria-label="Copy assistant message"
-                                  >
-                                    {copiedAssistantMessageKey ===
-                                    `${m.id}-${group.renderKey}` ? (
-                                      <Check className="h-3.5 w-3.5" />
-                                    ) : (
-                                      <Copy className="h-3.5 w-3.5" />
-                                    )}
-                                  </Button>
-                                </div>
+                                {!isMessageStreaming && (
+                                  <div>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                      onClick={() =>
+                                        void copyAssistantMessageText(
+                                          `${m.id}-${group.renderKey}`,
+                                          p.text,
+                                        )
+                                      }
+                                      disabled={p.text.trim().length === 0}
+                                      aria-label="Copy assistant message"
+                                    >
+                                      {copiedAssistantMessageKey ===
+                                      `${m.id}-${group.renderKey}` ? (
+                                        <Check className="h-3.5 w-3.5" />
+                                      ) : (
+                                        <Copy className="h-3.5 w-3.5" />
+                                      )}
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}
