@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { asc, desc, inArray } from "drizzle-orm";
 import { db } from "./client";
 import { chatMessages, chats } from "./schema";
 import {
@@ -11,10 +11,48 @@ export interface SessionInboxContext {
   latestChatId: string | null;
   latestAssistantParts: unknown[] | null;
   latestAssistantMessageAt: Date | null;
+  firstUserMessageText: string | null;
+  latestAssistantMessageText: string | null;
 }
 
-function toPartsArray(value: unknown): unknown[] | null {
-  return Array.isArray(value) ? value : null;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function toMessageParts(value: unknown): unknown[] | null {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (isRecord(value) && Array.isArray(value.parts)) {
+    return value.parts;
+  }
+
+  return null;
+}
+
+function extractMessageText(value: unknown): string | null {
+  const parts = toMessageParts(value);
+  if (!parts) {
+    return null;
+  }
+
+  const text = parts
+    .flatMap((part) => {
+      if (!isRecord(part)) {
+        return [];
+      }
+
+      if (part.type === "text" && typeof part.text === "string") {
+        return [part.text];
+      }
+
+      return [];
+    })
+    .join("\n")
+    .trim();
+
+  return text.length > 0 ? text : null;
 }
 
 export async function getSessionInboxContexts(
@@ -56,31 +94,43 @@ export async function getSessionInboxContexts(
     (chatRow) => chatRow.id,
   );
 
+  const firstUserMessageByChatId = new Map<string, string | null>();
   const latestAssistantByChatId = new Map<
     string,
-    { parts: unknown[] | null; createdAt: Date | null }
+    {
+      text: string | null;
+      parts: unknown[] | null;
+      createdAt: Date | null;
+    }
   >();
 
   if (latestChatIds.length > 0) {
-    const assistantMessageRows = await db
+    const messageRows = await db
       .select({
         chatId: chatMessages.chatId,
+        role: chatMessages.role,
         createdAt: chatMessages.createdAt,
-        parts: chatMessages.parts,
+        payload: chatMessages.parts,
       })
       .from(chatMessages)
-      .where(
-        and(
-          inArray(chatMessages.chatId, latestChatIds),
-          eq(chatMessages.role, "assistant"),
-        ),
-      )
-      .orderBy(desc(chatMessages.createdAt));
+      .where(inArray(chatMessages.chatId, latestChatIds))
+      .orderBy(asc(chatMessages.createdAt));
 
-    for (const messageRow of assistantMessageRows) {
-      if (!latestAssistantByChatId.has(messageRow.chatId)) {
+    for (const messageRow of messageRows) {
+      if (messageRow.role === "user") {
+        if (!firstUserMessageByChatId.has(messageRow.chatId)) {
+          firstUserMessageByChatId.set(
+            messageRow.chatId,
+            extractMessageText(messageRow.payload),
+          );
+        }
+        continue;
+      }
+
+      if (messageRow.role === "assistant") {
         latestAssistantByChatId.set(messageRow.chatId, {
-          parts: toPartsArray(messageRow.parts),
+          text: extractMessageText(messageRow.payload),
+          parts: toMessageParts(messageRow.payload),
           createdAt: messageRow.createdAt,
         });
       }
@@ -98,6 +148,10 @@ export async function getSessionInboxContexts(
       latestChatId: latestChat?.id ?? null,
       latestAssistantParts: latestAssistant?.parts ?? null,
       latestAssistantMessageAt: latestAssistant?.createdAt ?? null,
+      firstUserMessageText: latestChat
+        ? (firstUserMessageByChatId.get(latestChat.id) ?? null)
+        : null,
+      latestAssistantMessageText: latestAssistant?.text ?? null,
     };
   });
 }

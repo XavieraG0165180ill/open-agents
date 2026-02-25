@@ -68,6 +68,20 @@ function formatTimeAgo(dateIso: string): string {
   });
 }
 
+function truncateLine(text: string, limit: number): string {
+  if (text.length <= limit) {
+    return text;
+  }
+
+  return `${text.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function isQuickReviewEvent(eventType: InboxEventType): boolean {
+  return (
+    eventType === "review_ready" || eventType === "run_completed_no_output"
+  );
+}
+
 function getEventIcon(eventType: InboxEventType) {
   switch (eventType) {
     case "question_asked":
@@ -148,6 +162,8 @@ export function InboxPage({ lastRepo }: InboxPageProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  const [selectedReviewItem, setSelectedReviewItem] =
+    useState<InboxItem | null>(null);
   const includeUpdates = activeFilter === "updates";
 
   const { data, loading, error, refresh, runAction } = useInbox({
@@ -452,7 +468,28 @@ export function InboxPage({ lastRepo }: InboxPageProps) {
                               <p className="mt-2 text-sm text-muted-foreground">
                                 {item.preview}
                               </p>
+                              {item.context.request ? (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground/80">
+                                    Asked:
+                                  </span>{" "}
+                                  {truncateLine(item.context.request, 140)}
+                                </p>
+                              ) : null}
+                              {item.context.outcome ? (
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground/80">
+                                    Latest:
+                                  </span>{" "}
+                                  {truncateLine(item.context.outcome, 180)}
+                                </p>
+                              ) : null}
                               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                {item.context.generatedByModel ? (
+                                  <span className="rounded-md bg-muted px-2 py-0.5">
+                                    Quick summary
+                                  </span>
+                                ) : null}
                                 {item.badges.hasStreaming ? (
                                   <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5">
                                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -492,9 +529,17 @@ export function InboxPage({ lastRepo }: InboxPageProps) {
                             {primaryAction ? (
                               <Button
                                 size="sm"
-                                onClick={() =>
-                                  void handleAction(item, primaryAction.type)
-                                }
+                                onClick={() => {
+                                  if (
+                                    primaryAction.type === "open_session" &&
+                                    isQuickReviewEvent(item.eventType)
+                                  ) {
+                                    setSelectedReviewItem(item);
+                                    return;
+                                  }
+
+                                  void handleAction(item, primaryAction.type);
+                                }}
                               >
                                 {primaryAction.label}
                               </Button>
@@ -533,6 +578,73 @@ export function InboxPage({ lastRepo }: InboxPageProps) {
           <InboxEmptyState />
         )}
       </main>
+
+      <Dialog
+        open={selectedReviewItem !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setSelectedReviewItem(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          {selectedReviewItem ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {selectedReviewItem.title} ·{" "}
+                  {getSessionLabel(selectedReviewItem)}
+                </DialogTitle>
+                <DialogDescription>
+                  {selectedReviewItem.preview}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    User asked
+                  </p>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">
+                    {selectedReviewItem.context.request ??
+                      "No user prompt captured."}
+                  </p>
+                </div>
+
+                <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Latest assistant output
+                  </p>
+                  <p className="max-h-[300px] overflow-y-auto whitespace-pre-wrap text-sm text-foreground">
+                    {selectedReviewItem.context.outcome ??
+                      "No assistant text output captured yet."}
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedReviewItem(null);
+                      void handleAction(selectedReviewItem, "mark_done");
+                    }}
+                  >
+                    Mark done
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      router.push(selectedReviewItem.links.sessionUrl);
+                      setSelectedReviewItem(null);
+                    }}
+                  >
+                    Open full session
+                  </Button>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

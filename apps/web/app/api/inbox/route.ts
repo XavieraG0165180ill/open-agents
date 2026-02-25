@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { gateway, generateText, type GatewayModelId } from "ai";
 import { getSessionInboxContexts } from "@/lib/db/inbox";
 import type {
   GetInboxResponse,
@@ -14,12 +16,185 @@ interface ToolSignals {
   hasToolError: boolean;
 }
 
+interface ContextSummary {
+  summary: string;
+  request: string | null;
+  outcome: string | null;
+  generatedByModel: boolean;
+}
+
+interface SummaryCacheEntry {
+  summary: string;
+  request: string | null;
+  outcome: string | null;
+  createdAt: number;
+}
+
+const QUICK_SUMMARY_MODEL_ID = "google/gemini-2.5-flash";
+const MAX_MODEL_SUMMARIES_PER_REQUEST = 8;
+const SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000;
+const summaryCache = new Map<string, SummaryCacheEntry>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function toLowerText(value: string | null | undefined): string {
   return (value ?? "").toLowerCase();
+}
+
+function truncateText(text: string, limit: number): string {
+  if (text.length <= limit) {
+    return text;
+  }
+
+  return `${text.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function normalizeMessageText(text: string | null | undefined): string | null {
+  if (!text) {
+    return null;
+  }
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function getSummaryCacheKey(
+  request: string | null,
+  outcome: string | null,
+): string {
+  return createHash("sha256")
+    .update(request ?? "")
+    .update("\n")
+    .update(outcome ?? "")
+    .digest("hex");
+}
+
+function pruneSummaryCache(now: number): void {
+  for (const [cacheKey, cacheEntry] of summaryCache.entries()) {
+    if (cacheEntry.createdAt + SUMMARY_CACHE_TTL_MS <= now) {
+      summaryCache.delete(cacheKey);
+    }
+  }
+}
+
+function fallbackSummary(
+  request: string | null,
+  outcome: string | null,
+  eventType: InboxEventType,
+): string {
+  const shortRequest = request ? truncateText(request, 120) : null;
+  const shortOutcome = outcome ? truncateText(outcome, 160) : null;
+
+  if (shortRequest && shortOutcome) {
+    return `${shortRequest} → ${shortOutcome}`;
+  }
+
+  if (shortRequest) {
+    return shortRequest;
+  }
+
+  if (shortOutcome) {
+    return shortOutcome;
+  }
+
+  switch (eventType) {
+    case "question_asked":
+      return "Agent asked for more input before it can continue.";
+    case "approval_requested":
+      return "Agent is blocked on a pending approval request.";
+    case "run_failed":
+      return "Run failed and needs your intervention.";
+    case "review_ready":
+      return "Run completed and is ready for your review.";
+    case "run_completed_no_output":
+      return "Run ended without meaningful code changes.";
+    case "running_update":
+      return "Run is still in progress.";
+  }
+}
+
+async function summarizeContext(args: {
+  request: string | null;
+  outcome: string | null;
+  eventType: InboxEventType;
+  allowModelSummary: boolean;
+}): Promise<ContextSummary> {
+  const request = normalizeMessageText(args.request);
+  const outcome = normalizeMessageText(args.outcome);
+
+  if (!args.allowModelSummary || (!request && !outcome)) {
+    return {
+      summary: fallbackSummary(request, outcome, args.eventType),
+      request,
+      outcome,
+      generatedByModel: false,
+    };
+  }
+
+  const now = Date.now();
+  pruneSummaryCache(now);
+
+  const cacheKey = getSummaryCacheKey(request, outcome);
+  const cached = summaryCache.get(cacheKey);
+
+  if (cached && cached.createdAt + SUMMARY_CACHE_TTL_MS > now) {
+    return {
+      summary: cached.summary,
+      request: cached.request,
+      outcome: cached.outcome,
+      generatedByModel: true,
+    };
+  }
+
+  try {
+    const summaryPrompt = [
+      "You are writing a compact inbox preview for an engineering task.",
+      "Summarize in one sentence under 24 words.",
+      "Focus on: what the user asked and what the assistant most recently produced.",
+      "No markdown, no labels, no quotes.",
+      `User request: ${request ?? "(none)"}`,
+      `Latest assistant output: ${outcome ?? "(none)"}`,
+    ].join("\n");
+
+    const response = await generateText({
+      model: gateway(QUICK_SUMMARY_MODEL_ID as GatewayModelId),
+      prompt: summaryPrompt,
+      maxOutputTokens: 90,
+      temperature: 0,
+    });
+
+    const summary = truncateText(
+      response.text.trim().replace(/\s+/g, " "),
+      180,
+    );
+
+    if (summary.length > 0) {
+      summaryCache.set(cacheKey, {
+        summary,
+        request,
+        outcome,
+        createdAt: now,
+      });
+
+      return {
+        summary,
+        request,
+        outcome,
+        generatedByModel: true,
+      };
+    }
+  } catch (error) {
+    console.warn("Failed to generate inbox summary via quick model:", error);
+  }
+
+  return {
+    summary: fallbackSummary(request, outcome, args.eventType),
+    request,
+    outcome,
+    generatedByModel: false,
+  };
 }
 
 function getToolSignals(parts: unknown[] | null): ToolSignals {
@@ -127,44 +302,37 @@ function deriveEventType(args: {
 
 function getEventCopy(eventType: InboxEventType): {
   title: string;
-  preview: string;
   primaryActionLabel: string;
 } {
   switch (eventType) {
     case "question_asked":
       return {
         title: "Question from agent",
-        preview: "This run is waiting for your answer.",
         primaryActionLabel: "Answer",
       };
     case "approval_requested":
       return {
         title: "Approval required",
-        preview: "A tool call is blocked on your approval.",
         primaryActionLabel: "Review",
       };
     case "run_failed":
       return {
         title: "Run blocked",
-        preview: "The run hit an error and needs guidance.",
         primaryActionLabel: "Investigate",
       };
     case "review_ready":
       return {
         title: "Review ready",
-        preview: "Work finished and has changes to review.",
-        primaryActionLabel: "Review",
+        primaryActionLabel: "Quick review",
       };
     case "run_completed_no_output":
       return {
         title: "Run completed with no output",
-        preview: "No meaningful code changes were detected.",
-        primaryActionLabel: "Investigate",
+        primaryActionLabel: "Quick review",
       };
     case "running_update":
       return {
         title: "Run in progress",
-        preview: "The agent is still working.",
         primaryActionLabel: "Open",
       };
   }
@@ -176,10 +344,19 @@ function includesQuery(args: {
   repoOwner: string | null;
   repoName: string | null;
   branch: string | null;
+  request: string | null;
+  outcome: string | null;
 }): boolean {
   if (!args.query) return true;
 
-  const haystack = [args.title, args.repoOwner, args.repoName, args.branch]
+  const haystack = [
+    args.title,
+    args.repoOwner,
+    args.repoName,
+    args.branch,
+    args.request,
+    args.outcome,
+  ]
     .map((value) => toLowerText(value))
     .join(" ");
 
@@ -211,27 +388,19 @@ export async function GET(req: Request) {
     updates: [],
   };
 
+  let remainingModelSummaries = MAX_MODEL_SUMMARIES_PER_REQUEST;
+
   for (const context of sessionContexts) {
     const {
       session,
       latestChatId,
       latestAssistantMessageAt,
       latestAssistantParts,
+      firstUserMessageText,
+      latestAssistantMessageText,
     } = context;
 
     if (session.status === "archived") {
-      continue;
-    }
-
-    if (
-      !includesQuery({
-        query,
-        title: session.title,
-        repoOwner: session.repoOwner,
-        repoName: session.repoName,
-        branch: session.branch,
-      })
-    ) {
       continue;
     }
 
@@ -268,6 +437,34 @@ export async function GET(req: Request) {
       continue;
     }
 
+    if (
+      !includesQuery({
+        query,
+        title: session.title,
+        repoOwner: session.repoOwner,
+        repoName: session.repoName,
+        branch: session.branch,
+        request: firstUserMessageText,
+        outcome: latestAssistantMessageText,
+      })
+    ) {
+      continue;
+    }
+
+    const allowModelSummary =
+      remainingModelSummaries > 0 && eventType !== "running_update";
+
+    const contextSummary = await summarizeContext({
+      request: firstUserMessageText,
+      outcome: latestAssistantMessageText,
+      eventType,
+      allowModelSummary,
+    });
+
+    if (contextSummary.generatedByModel && allowModelSummary) {
+      remainingModelSummaries -= 1;
+    }
+
     const copy = getEventCopy(eventType);
     const group = getEventGroup(eventType);
     const timestamp =
@@ -285,7 +482,12 @@ export async function GET(req: Request) {
       createdAt: timestamp.toISOString(),
       updatedAt: timestamp.toISOString(),
       title: copy.title,
-      preview: copy.preview,
+      preview: contextSummary.summary,
+      context: {
+        request: contextSummary.request,
+        outcome: contextSummary.outcome,
+        generatedByModel: contextSummary.generatedByModel,
+      },
       session: {
         sessionId: session.id,
         chatId: latestChatId,

@@ -36,6 +36,11 @@ export interface InboxItem {
   updatedAt: string;
   title: string;
   preview: string;
+  context: {
+    request: string | null;
+    outcome: string | null;
+    generatedByModel: boolean;
+  };
   session: InboxSessionRef;
   badges: {
     hasUnread: boolean;
