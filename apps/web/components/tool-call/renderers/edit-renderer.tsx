@@ -4,7 +4,7 @@ import { toRelativePath } from "@open-harness/shared/lib/tool-state";
 import { MultiFileDiff } from "@pierre/diffs/react";
 import { Loader2 } from "lucide-react";
 import type React from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ToolRendererProps } from "@/app/lib/render-tool";
 import { defaultDiffOptions } from "@/lib/diffs-config";
 import { cn } from "@/lib/utils";
@@ -25,23 +25,26 @@ export function EditRenderer({
   const oldString = input?.oldString ?? "";
   const newString = input?.newString ?? "";
 
-  const oldLines = oldString.split("\n");
-  const newLines = newString.split("\n");
-
   // Count additions and removals using multiset comparison to handle duplicate lines
-  const oldCounts = new Map<string, number>();
-  for (const l of oldLines) oldCounts.set(l, (oldCounts.get(l) ?? 0) + 1);
-  const newCounts = new Map<string, number>();
-  for (const l of newLines) newCounts.set(l, (newCounts.get(l) ?? 0) + 1);
+  const { additions, removals } = useMemo(() => {
+    const oldLines = oldString.split("\n");
+    const newLines = newString.split("\n");
 
-  let additions = 0;
-  for (const [line, count] of newCounts) {
-    additions += Math.max(0, count - (oldCounts.get(line) ?? 0));
-  }
-  let removals = 0;
-  for (const [line, count] of oldCounts) {
-    removals += Math.max(0, count - (newCounts.get(line) ?? 0));
-  }
+    const oldCounts = new Map<string, number>();
+    for (const l of oldLines) oldCounts.set(l, (oldCounts.get(l) ?? 0) + 1);
+    const newCounts = new Map<string, number>();
+    for (const l of newLines) newCounts.set(l, (newCounts.get(l) ?? 0) + 1);
+
+    let add = 0;
+    for (const [line, count] of newCounts) {
+      add += Math.max(0, count - (oldCounts.get(line) ?? 0));
+    }
+    let rem = 0;
+    for (const [line, count] of oldCounts) {
+      rem += Math.max(0, count - (newCounts.get(line) ?? 0));
+    }
+    return { additions: add, removals: rem };
+  }, [oldString, newString]);
 
   const output = part.state === "output-available" ? part.output : undefined;
   const outputError =
