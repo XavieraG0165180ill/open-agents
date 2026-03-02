@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { type ThemePreference, useTheme } from "@/app/providers";
 import {
@@ -25,13 +25,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
 import {
-  DEFAULT_CHAT_VIEW_MODE,
-  isChatViewMode,
-  saveChatViewModeToStorage,
-  type ChatViewMode,
-  loadChatViewModeFromStorage,
-} from "@/lib/chat-view-mode";
-import {
   type AvailableModel,
   DEFAULT_MODEL_ID,
   getModelDisplayName,
@@ -52,11 +45,6 @@ const THEME_OPTIONS: Array<{ id: ThemePreference; name: string }> = [
   { id: "system", name: "System" },
   { id: "light", name: "Light" },
   { id: "dark", name: "Dark" },
-];
-
-const CHAT_VIEW_OPTIONS: Array<{ id: ChatViewMode; name: string }> = [
-  { id: "condensed", name: "Condensed (default)" },
-  { id: "full", name: "Full visibility" },
 ];
 
 function isThemePreference(value: string): value is ThemePreference {
@@ -83,19 +71,6 @@ export function PreferencesSectionSkeleton() {
           </Select>
           <p className="text-xs text-muted-foreground">
             Choose between light and dark mode.
-          </p>
-        </div>
-
-        <div className="grid gap-2">
-          <Label htmlFor="chat-view">Chat View</Label>
-          <Select disabled>
-            <SelectTrigger id="chat-view" className="w-full max-w-xs">
-              <Skeleton className="h-4 w-36" />
-            </SelectTrigger>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Choose whether chats default to a condensed summary or full streamed
-            visibility.
           </p>
         </div>
 
@@ -135,29 +110,13 @@ export function PreferencesSection() {
     fetcher,
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [chatViewMode, setChatViewMode] = useState<ChatViewMode>(
-    DEFAULT_CHAT_VIEW_MODE,
-  );
 
   const models = modelsData?.models ?? [];
-
-  useEffect(() => {
-    setChatViewMode(loadChatViewModeFromStorage());
-  }, []);
 
   const handleThemeChange = (nextTheme: string) => {
     if (isThemePreference(nextTheme)) {
       setTheme(nextTheme);
     }
-  };
-
-  const handleChatViewChange = (nextViewMode: string) => {
-    if (!isChatViewMode(nextViewMode)) {
-      return;
-    }
-
-    setChatViewMode(nextViewMode);
-    saveChatViewModeToStorage(nextViewMode);
   };
 
   const handleModelChange = async (modelId: string) => {
@@ -226,27 +185,6 @@ export function PreferencesSection() {
           <p className="text-xs text-muted-foreground">
             Choose between light and dark mode. This preference is saved in your
             current browser.
-          </p>
-        </div>
-
-        <div className="grid gap-2">
-          <Label htmlFor="chat-view">Chat View</Label>
-          <Select value={chatViewMode} onValueChange={handleChatViewChange}>
-            <SelectTrigger id="chat-view" className="w-full max-w-xs">
-              <SelectValue placeholder="Select a chat view" />
-            </SelectTrigger>
-            <SelectContent>
-              {CHAT_VIEW_OPTIONS.map((option) => (
-                <SelectItem key={option.id} value={option.id}>
-                  {option.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Condensed hides tool/reasoning details and only shows the final
-            assistant summary. Full visibility restores the previous streamed
-            view with tool calls and intermediate output.
           </p>
         </div>
 

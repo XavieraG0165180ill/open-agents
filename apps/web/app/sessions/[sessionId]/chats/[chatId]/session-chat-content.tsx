@@ -74,11 +74,6 @@ import { useSessionChats } from "@/hooks/use-session-chats";
 import { useSessions } from "@/hooks/use-sessions";
 import { useSlashCommands } from "@/hooks/use-slash-commands";
 import { isChatInFlight as isChatInFlightStatus } from "@/lib/chat-streaming-state";
-import {
-  CHAT_VIEW_MODE_STORAGE_KEY,
-  DEFAULT_CHAT_VIEW_MODE,
-  loadChatViewModeFromStorage,
-} from "@/lib/chat-view-mode";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import {
   type AvailableModel,
@@ -767,7 +762,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
   const [showDiffPanel, setShowDiffPanel] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [chatViewMode, setChatViewMode] = useState(DEFAULT_CHAT_VIEW_MODE);
   const hasMounted = useHasMounted();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isMountedRef = useRef(true);
@@ -776,21 +770,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    setChatViewMode(loadChatViewModeFromStorage());
-
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === CHAT_VIEW_MODE_STORAGE_KEY) {
-        setChatViewMode(loadChatViewModeFromStorage());
-      }
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
     };
   }, []);
 
@@ -889,7 +868,14 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     checkBranchAndPr,
     messageTimestamps,
   } = useSessionChatContext();
-  const { messages, error, sendMessage, status, addToolOutput } = chat;
+  const {
+    messages,
+    error,
+    sendMessage,
+    status,
+    addToolApprovalResponse,
+    addToolOutput,
+  } = chat;
   const {
     markChatRead,
     setChatStreaming,
@@ -920,7 +906,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     [hasMounted, messages, initialMessages],
   );
   const isChatInFlight = isChatInFlightStatus(status);
-  const isCondensedView = chatViewMode === "condensed";
   const [isChatInFlightSettled, setIsChatInFlightSettled] =
     useState(isChatInFlight);
   const chatInFlightSettleTimeoutRef = useRef<ReturnType<
@@ -1009,9 +994,9 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
     return false;
   }, [renderMessages]);
 
-  // In inbox mode we hide assistant text while streaming, so the working
-  // indicator should stay visible for the entire duration the agent is active.
-  // But NOT when the agent is waiting for user input (ask_user_question).
+  // Keep the working indicator visible while the agent is active,
+  // but hide it when the agent is waiting for explicit user input
+  // (ask_user_question).
   const showThinkingIndicator = useMemo(() => {
     if (hasPendingQuestionEarly) return false;
     if (hasPendingResponse && !isChatInFlight) {
@@ -1177,41 +1162,39 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
       };
     });
   }, [renderMessages, isChatInFlightSettled]);
+  const handleToolApprove = useCallback(
+    (id: string) => {
+      addToolApprovalResponse({ id, approved: true });
+    },
+    [addToolApprovalResponse],
+  );
+  const handleToolDeny = useCallback(
+    (id: string, reason?: string) => {
+      addToolApprovalResponse({
+        id,
+        approved: false,
+        reason,
+      });
+    },
+    [addToolApprovalResponse],
+  );
   const renderedMessageGroups = useMemo(
     () =>
       groupedRenderMessages.map(
         ({ message: m, groups, isStreaming: isMessageStreaming }) => {
-          const lastAssistantTextIndex = (() => {
-            if (!isCondensedView || m.role !== "assistant") {
-              return -1;
-            }
-
-            for (let i = groups.length - 1; i >= 0; i--) {
-              const g = groups[i];
-              if (
-                g.type === "part" &&
-                g.part.type === "text" &&
-                g.part.text.trim()
-              ) {
-                return i;
-              }
-            }
-
-            return -1;
-          })();
-
-          return groups.map((group, groupIndex) => {
+          return groups.map((group) => {
             if (group.type === "task-group") {
-              if (isCondensedView) {
-                return null;
-              }
-
               return (
                 <div key={`${m.id}-${group.renderKey}`} className="max-w-full">
                   <TaskGroupView
                     taskParts={group.tasks}
-                    activeApprovalId={null}
+                    activeApprovalId={
+                      group.tasks.find((t) => t.state === "approval-requested")
+                        ?.approval?.id ?? null
+                    }
                     isStreaming={isMessageStreaming}
+                    onApprove={handleToolApprove}
+                    onDeny={handleToolDeny}
                   />
                 </div>
               );
@@ -1220,10 +1203,6 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
             const p = group.part;
 
             if (isReasoningUIPart(p)) {
-              if (isCondensedView) {
-                return null;
-              }
-
               return (
                 <div
                   key={`${m.id}-${group.renderKey}`}
@@ -1237,49 +1216,11 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
               );
             }
 
-            if (isToolUIPart(p)) {
-              if (isCondensedView) {
-                return null;
-              }
-
-              return (
-                <div key={`${m.id}-${group.renderKey}`} className="max-w-full">
-                  <ToolCall
-                    part={p as WebAgentUIToolPart}
-                    activeApprovalId={
-                      p.state === "approval-requested"
-                        ? (p.approval?.id ?? null)
-                        : null
-                    }
-                    isStreaming={isMessageStreaming}
-                  />
-                </div>
-              );
-            }
-
             if (p.type === "text") {
               if (!p.text.trim()) return null;
 
-              if (
-                m.role === "assistant" &&
-                isCondensedView &&
-                isMessageStreaming
-              ) {
-                return null;
-              }
-
-              if (
-                m.role === "assistant" &&
-                isCondensedView &&
-                groupIndex !== lastAssistantTextIndex
-              ) {
-                return null;
-              }
-
               const shouldAnimateAssistantText =
-                m.role === "assistant" &&
-                !isCondensedView &&
-                isMessageStreaming;
+                m.role === "assistant" && isMessageStreaming;
 
               return (
                 <div
@@ -1313,6 +1254,19 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
               );
             }
 
+            if (isToolUIPart(p)) {
+              return (
+                <div key={`${m.id}-${group.renderKey}`} className="max-w-full">
+                  <ToolCall
+                    part={p as WebAgentUIToolPart}
+                    isStreaming={isMessageStreaming}
+                    onApprove={handleToolApprove}
+                    onDeny={handleToolDeny}
+                  />
+                </div>
+              );
+            }
+
             // Render image attachments from user
             if (p.type === "file" && p.mediaType?.startsWith("image/")) {
               return (
@@ -1336,7 +1290,7 @@ export function SessionChatContent({ initialModels }: SessionChatContentProps) {
           });
         },
       ),
-    [groupedRenderMessages, isCondensedView],
+    [groupedRenderMessages, handleToolApprove, handleToolDeny],
   );
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
   const lastStatusSyncAtRef = useRef(0);
