@@ -33,6 +33,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import useSWR from "swr";
 import type {
   WebAgentUIMessage,
   WebAgentUIMessagePart,
@@ -74,7 +75,13 @@ import {
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
+import {
+  type AvailableModel,
+  DEFAULT_CONTEXT_LIMIT,
+  getModelContextLimit,
+} from "@/lib/models";
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
+import { fetcher } from "@/lib/swr";
 import { streamdownPlugins } from "@/lib/streamdown-config";
 import { cn } from "@/lib/utils";
 import {
@@ -168,6 +175,22 @@ interface GroupedRenderMessage {
   isStreaming: boolean;
 }
 
+interface ModelsResponse {
+  models: AvailableModel[];
+}
+
+type SessionChatModelOption = {
+  id: string;
+  label: string;
+  description: string;
+  isVariant: boolean;
+};
+
+interface SessionChatContentProps {
+  initialModels: AvailableModel[];
+  modelOptions: SessionChatModelOption[];
+}
+
 function getPartIdentity(part: WebAgentUIMessagePart): string {
   if (isToolUIPart(part)) {
     return part.toolCallId ? `tool:${part.toolCallId}` : `tool:${part.type}`;
@@ -231,11 +254,13 @@ function isSandboxValid(sandboxInfo: SandboxInfo | null): boolean {
   return Date.now() < expiresAt;
 }
 
+const tokenFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
 function formatTokens(tokens: number): string {
-  if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1)}k`;
-  }
-  return tokens.toString();
+  return tokenFormatter.format(tokens).toLowerCase();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -253,7 +278,9 @@ function CircularProgress({
 }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+  const normalizedPercentage = Math.min(100, Math.max(0, percentage));
+  const strokeDashoffset =
+    circumference - (normalizedPercentage / 100) * circumference;
 
   return (
     <svg width={size} height={size} className="-rotate-90">
@@ -636,18 +663,10 @@ function ShareDialog({
   );
 }
 
-type SessionChatModelOption = {
-  id: string;
-  label: string;
-  description: string;
-  isVariant: boolean;
-};
-
-interface SessionChatContentProps {
-  modelOptions: SessionChatModelOption[];
-}
-
-export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
+export function SessionChatContent({
+  initialModels,
+  modelOptions,
+}: SessionChatContentProps) {
   const router = useRouter();
   const [input, setInput] = useState("");
   const [isCreatingSandbox, setIsCreatingSandbox] = useState(false);
@@ -778,6 +797,18 @@ export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
     clearChatTitle,
     refreshChats,
   } = useSessionChats(session.id);
+  const hasInitialModels = initialModels.length > 0;
+  const { data: modelsData } = useSWR<ModelsResponse>("/api/models", fetcher, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+    revalidateIfStale: false,
+    revalidateOnMount: !hasInitialModels,
+    fallbackData: hasInitialModels ? { models: initialModels } : undefined,
+  });
+  const models = useMemo(
+    () => modelsData?.models ?? initialModels,
+    [modelsData?.models, initialModels],
+  );
   const selectedModelLabel = useMemo(() => {
     if (!chatInfo.modelId) {
       return "";
@@ -978,6 +1009,133 @@ export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
       };
     });
   }, [renderMessages, isChatInFlightSettled]);
+  const handleToolApprove = useCallback(
+    (id: string) => {
+      addToolApprovalResponse({ id, approved: true });
+    },
+    [addToolApprovalResponse],
+  );
+  const handleToolDeny = useCallback(
+    (id: string, reason?: string) => {
+      addToolApprovalResponse({
+        id,
+        approved: false,
+        reason,
+      });
+    },
+    [addToolApprovalResponse],
+  );
+  const renderedMessageGroups = useMemo(
+    () =>
+      groupedRenderMessages.map(
+        ({ message: m, groups, isStreaming: isMessageStreaming }) => {
+          return groups.map((group) => {
+            if (group.type === "task-group") {
+              return (
+                <div key={`${m.id}-${group.renderKey}`} className="max-w-full">
+                  <TaskGroupView
+                    taskParts={group.tasks}
+                    activeApprovalId={
+                      group.tasks.find((t) => t.state === "approval-requested")
+                        ?.approval?.id ?? null
+                    }
+                    isStreaming={isMessageStreaming}
+                    onApprove={handleToolApprove}
+                    onDeny={handleToolDeny}
+                  />
+                </div>
+              );
+            }
+
+            const p = group.part;
+
+            if (isReasoningUIPart(p)) {
+              return (
+                <div
+                  key={`${m.id}-${group.renderKey}`}
+                  className="flex justify-start"
+                >
+                  <ThinkingBlock
+                    text={p.text}
+                    isStreaming={isMessageStreaming && p.state === "streaming"}
+                  />
+                </div>
+              );
+            }
+
+            if (p.type === "text") {
+              return (
+                <div
+                  key={`${m.id}-${group.renderKey}`}
+                  className={cn(
+                    "flex min-w-0",
+                    m.role === "user" ? "justify-end" : "justify-start",
+                  )}
+                >
+                  {m.role === "user" ? (
+                    <div className="min-w-0 max-w-[80%] rounded-3xl bg-secondary px-4 py-2">
+                      <p className="whitespace-pre-wrap break-words">
+                        {p.text}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="min-w-0 w-full overflow-hidden">
+                      <Streamdown
+                        animated={
+                          isMessageStreaming
+                            ? STREAMDOWN_FADE_IN_ANIMATION
+                            : undefined
+                        }
+                        mode={isMessageStreaming ? "streaming" : "static"}
+                        isAnimating={isMessageStreaming}
+                        plugins={streamdownPlugins}
+                      >
+                        {p.text}
+                      </Streamdown>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            if (isToolUIPart(p)) {
+              return (
+                <div key={`${m.id}-${group.renderKey}`} className="max-w-full">
+                  <ToolCall
+                    part={p as WebAgentUIToolPart}
+                    isStreaming={isMessageStreaming}
+                    onApprove={handleToolApprove}
+                    onDeny={handleToolDeny}
+                  />
+                </div>
+              );
+            }
+
+            // Render image attachments
+            if (p.type === "file" && p.mediaType?.startsWith("image/")) {
+              return (
+                <div
+                  key={`${m.id}-${group.renderKey}`}
+                  className="flex justify-end"
+                >
+                  <div className="max-w-[80%]">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- Data URLs not supported by next/image */}
+                    <img
+                      src={p.url}
+                      alt={p.filename ?? "Attached image"}
+                      className="max-h-64 rounded-lg"
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            return null;
+          });
+        },
+      ),
+    [groupedRenderMessages, handleToolApprove, handleToolDeny],
+  );
   const [isUpdatingModel, setIsUpdatingModel] = useState(false);
   const lastStatusSyncAtRef = useRef(0);
   const statusSyncInFlightRef = useRef(false);
@@ -1773,6 +1931,15 @@ export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
     return { inputTokens: 0, outputTokens: 0 };
   }, [renderMessages]);
 
+  const contextLimit = useMemo(() => {
+    const modelId = chatInfo.modelId;
+    if (!modelId) {
+      return DEFAULT_CONTEXT_LIMIT;
+    }
+
+    return getModelContextLimit(modelId, models) ?? DEFAULT_CONTEXT_LIMIT;
+  }, [chatInfo.modelId, models]);
+
   // Detect pending AskUserQuestion tool calls
   const { hasPendingQuestion, pendingQuestionPart, questionToolCallId } =
     useMemo(() => {
@@ -2116,7 +2283,6 @@ export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
                   </Button>
                 ) : (
                   <Button
-                    variant="outline"
                     size="sm"
                     onClick={() => {
                       const prUrl = `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
@@ -2201,143 +2367,7 @@ export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
         <div ref={containerRef} className="h-full overflow-y-auto">
           <div className="mx-auto max-w-4xl overflow-hidden px-4 py-8">
             <div className="space-y-6">
-              {groupedRenderMessages.map(
-                ({ message: m, groups, isStreaming: isMessageStreaming }) => {
-                  return groups.map((group) => {
-                    if (group.type === "task-group") {
-                      return (
-                        <div
-                          key={`${m.id}-${group.renderKey}`}
-                          className="max-w-full"
-                        >
-                          <TaskGroupView
-                            taskParts={group.tasks}
-                            activeApprovalId={
-                              group.tasks.find(
-                                (t) => t.state === "approval-requested",
-                              )?.approval?.id ?? null
-                            }
-                            isStreaming={isMessageStreaming}
-                            onApprove={(id) =>
-                              addToolApprovalResponse({ id, approved: true })
-                            }
-                            onDeny={(id, reason) =>
-                              addToolApprovalResponse({
-                                id,
-                                approved: false,
-                                reason,
-                              })
-                            }
-                          />
-                        </div>
-                      );
-                    }
-
-                    const p = group.part;
-
-                    if (isReasoningUIPart(p)) {
-                      return (
-                        <div
-                          key={`${m.id}-${group.renderKey}`}
-                          className="flex justify-start"
-                        >
-                          <ThinkingBlock
-                            text={p.text}
-                            isStreaming={
-                              isMessageStreaming && p.state === "streaming"
-                            }
-                          />
-                        </div>
-                      );
-                    }
-
-                    if (p.type === "text") {
-                      return (
-                        <div
-                          key={`${m.id}-${group.renderKey}`}
-                          className={cn(
-                            "flex min-w-0",
-                            m.role === "user" ? "justify-end" : "justify-start",
-                          )}
-                        >
-                          {m.role === "user" ? (
-                            <div className="min-w-0 max-w-[80%] rounded-3xl bg-secondary px-4 py-2">
-                              <p className="whitespace-pre-wrap break-words">
-                                {p.text}
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="min-w-0 w-full overflow-hidden">
-                              <Streamdown
-                                animated={
-                                  isMessageStreaming
-                                    ? STREAMDOWN_FADE_IN_ANIMATION
-                                    : undefined
-                                }
-                                mode={
-                                  isMessageStreaming ? "streaming" : "static"
-                                }
-                                isAnimating={isMessageStreaming}
-                                plugins={streamdownPlugins}
-                              >
-                                {p.text}
-                              </Streamdown>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    }
-
-                    if (isToolUIPart(p)) {
-                      return (
-                        <div
-                          key={`${m.id}-${group.renderKey}`}
-                          className="max-w-full"
-                        >
-                          <ToolCall
-                            part={p as WebAgentUIToolPart}
-                            isStreaming={isMessageStreaming}
-                            onApprove={(id) =>
-                              addToolApprovalResponse({ id, approved: true })
-                            }
-                            onDeny={(id, reason) =>
-                              addToolApprovalResponse({
-                                id,
-                                approved: false,
-                                reason,
-                              })
-                            }
-                          />
-                        </div>
-                      );
-                    }
-
-                    // Render image attachments
-                    if (
-                      p.type === "file" &&
-                      p.mediaType?.startsWith("image/")
-                    ) {
-                      return (
-                        <div
-                          key={`${m.id}-${group.renderKey}`}
-                          className="flex justify-end"
-                        >
-                          <div className="max-w-[80%]">
-                            {/* eslint-disable-next-line @next/next/no-img-element -- Data URLs not supported by next/image */}
-                            <img
-                              src={p.url}
-                              alt={p.filename ?? "Attached image"}
-                              className="max-h-64 rounded-lg"
-                            />
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return null;
-                  });
-                },
-              )}
+              {renderedMessageGroups}
               {showThinkingIndicator && (
                 <div className="flex justify-start">
                   <ThinkingBlock text="" isStreaming />
@@ -2602,11 +2632,10 @@ export function SessionChatContent({ modelOptions }: SessionChatContentProps) {
                       </span>
                     )
                   )}
-                  {/* TODO: Derive context limit from model ID instead of hardcoding */}
                   <ContextUsageIndicator
                     inputTokens={tokenUsage.inputTokens}
                     outputTokens={tokenUsage.outputTokens}
-                    contextLimit={200_000}
+                    contextLimit={contextLimit}
                   />
                 </div>
 

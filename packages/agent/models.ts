@@ -1,5 +1,6 @@
 import type { AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
 import { devToolsMiddleware } from "@ai-sdk/devtools";
+import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import {
   createGateway,
   defaultSettingsMiddleware,
@@ -19,7 +20,7 @@ function getAnthropicSettings(modelId: string): AnthropicLanguageModelOptions {
     return {
       effort: "medium",
       thinking: { type: "adaptive" },
-    };
+    } satisfies AnthropicLanguageModelOptions;
   }
 
   return {
@@ -92,12 +93,19 @@ export function gateway(
     >;
   }
 
-  // Apply openai middleware to expose reasoning summaries
+  // Apply openai middleware to expose reasoning summaries and encrypted content
   if (modelId.startsWith("openai/")) {
-    defaultProviderOptions.openai = {
+    const openaiProviderOptions = {
       reasoningEffort: "high",
       reasoningSummary: "detailed",
-    };
+      store: false,
+      include: ["reasoning.encrypted_content"],
+    } satisfies OpenAIResponsesProviderOptions;
+
+    defaultProviderOptions.openai = openaiProviderOptions as Record<
+      string,
+      JSONValue
+    >;
   }
 
   const providerOptions = mergeProviderOptions(

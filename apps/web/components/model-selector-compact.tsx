@@ -2,8 +2,6 @@
 
 import { CheckIcon, ChevronDown } from "lucide-react";
 import { useState } from "react";
-import { DEFAULT_MODEL_ID } from "@/lib/models";
-import { cn } from "@/lib/utils";
 import {
   Command,
   CommandEmpty,
@@ -17,6 +15,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { DEFAULT_MODEL_ID } from "@/lib/models";
+import { cn } from "@/lib/utils";
 
 type ModelSelectorOption = {
   id: string;
