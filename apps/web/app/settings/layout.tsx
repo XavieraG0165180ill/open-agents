@@ -101,7 +101,7 @@ function SettingsLayout({
         <div className="flex h-full w-full flex-col">
           <div className="flex items-center gap-4 px-6 py-4">
             <Link
-              href="/"
+              href="/sessions"
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -125,7 +125,7 @@ function SettingsLayout({
           </SheetHeader>
           <div className="flex items-center gap-4 px-6 py-4">
             <Link
-              href="/"
+              href="/sessions"
               onClick={() => setMobileSidebarOpen(false)}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
             >
