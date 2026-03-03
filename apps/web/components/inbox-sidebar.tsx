@@ -1,18 +1,32 @@
 "use client";
 
-import { Archive, ArrowLeft, GitMerge, Pencil, Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
 import {
-  memo,
-  type RefObject,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+  Archive,
+  ArrowLeft,
+  EllipsisVertical,
+  GitMerge,
+  Pencil,
+  Plus,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NewSessionDialog } from "@/components/new-session-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { useSidebar } from "@/components/ui/sidebar";
 import type { SessionWithUnread } from "@/hooks/use-sessions";
 
@@ -100,29 +114,17 @@ function PrBadge({
 type SessionRowProps = {
   session: SessionWithUnread;
   isActive: boolean;
-  isEditing: boolean;
-  editingTitle: string;
-  editInputRef: RefObject<HTMLInputElement | null>;
   onSessionClick: (session: SessionWithUnread) => void;
   onSessionPrefetch: (session: SessionWithUnread) => void;
-  onStartEdit: (session: SessionWithUnread) => void;
-  onEditTitleChange: (title: string) => void;
-  onRenameSubmit: (sessionId: string, title: string) => Promise<void>;
-  onCancelEdit: () => void;
+  onOpenRenameDialog: (session: SessionWithUnread) => void;
 };
 
 const SessionRow = memo(function SessionRow({
   session,
   isActive,
-  isEditing,
-  editingTitle,
-  editInputRef,
   onSessionClick,
   onSessionPrefetch,
-  onStartEdit,
-  onEditTitleChange,
-  onRenameSubmit,
-  onCancelEdit,
+  onOpenRenameDialog,
 }: SessionRowProps) {
   const isWorking = session.hasStreaming;
   const isUnread = session.hasUnread && !isActive;
@@ -146,90 +148,74 @@ const SessionRow = memo(function SessionRow({
       </div>
 
       <div className="min-w-0 flex-1">
-        {isEditing ? (
-          <input
-            ref={editInputRef}
-            type="text"
-            value={editingTitle}
-            onChange={(e) => onEditTitleChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void onRenameSubmit(session.id, editingTitle);
-              } else if (e.key === "Escape") {
-                onCancelEdit();
-              }
-            }}
-            onBlur={() => {
-              void onRenameSubmit(session.id, editingTitle);
-            }}
-            className="h-5 w-full rounded bg-transparent text-sm font-medium text-foreground focus:outline-none"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => onSessionClick(session)}
-            onMouseEnter={() => onSessionPrefetch(session)}
-            onFocus={() => onSessionPrefetch(session)}
-            className="block w-full text-left"
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <p
-                className={`truncate text-sm ${
-                  isUnread || isWorking
-                    ? "font-semibold text-foreground"
-                    : "font-medium text-foreground"
-                }`}
-              >
-                {session.title}
-              </p>
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {createdAtLabel}
-              </span>
-            </div>
-
-            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-              {session.repoName && (
-                <span className="truncate">
-                  {session.repoName}
-                  {session.branch && (
-                    <span className="text-muted-foreground/50">
-                      /{session.branch}
-                    </span>
-                  )}
-                </span>
-              )}
-              {!session.repoName && isWorking && (
-                <span className="text-muted-foreground/60">Working...</span>
-              )}
-              <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                <PrBadge
-                  prNumber={session.prNumber}
-                  status={session.prStatus}
-                />
-                <DiffStats
-                  added={session.linesAdded}
-                  removed={session.linesRemoved}
-                />
-              </span>
-            </div>
-          </button>
-        )}
-      </div>
-
-      {!isEditing && (
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onStartEdit(session);
-          }}
-          className="absolute right-2 top-2.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover:opacity-100"
-          aria-label={`Rename ${session.title}`}
+          onClick={() => onSessionClick(session)}
+          onMouseEnter={() => onSessionPrefetch(session)}
+          onFocus={() => onSessionPrefetch(session)}
+          className="block w-full pr-10 text-left"
         >
-          <Pencil className="h-3 w-3" />
+          <div className="flex items-baseline justify-between gap-2">
+            <p
+              className={`truncate text-sm ${
+                isUnread || isWorking
+                  ? "font-semibold text-foreground"
+                  : "font-medium text-foreground"
+              }`}
+            >
+              {session.title}
+            </p>
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {createdAtLabel}
+            </span>
+          </div>
+
+          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+            {session.repoName && (
+              <span className="truncate">
+                {session.repoName}
+                {session.branch && (
+                  <span className="text-muted-foreground/50">
+                    /{session.branch}
+                  </span>
+                )}
+              </span>
+            )}
+            {!session.repoName && isWorking && (
+              <span className="text-muted-foreground/60">Working...</span>
+            )}
+            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+              <PrBadge prNumber={session.prNumber} status={session.prStatus} />
+              <DiffStats
+                added={session.linesAdded}
+                removed={session.linesRemoved}
+              />
+            </span>
+          </div>
         </button>
-      )}
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute right-2 top-2.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background/60 hover:text-foreground group-hover:opacity-100"
+            aria-label={`Open menu for ${session.title}`}
+          >
+            <EllipsisVertical className="h-3 w-3" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            onClick={() => onOpenRenameDialog(session)}
+            className="gap-2"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            <span>Rename session</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }, areSessionRowsEqual);
@@ -238,15 +224,7 @@ function areSessionRowsEqual(
   prev: SessionRowProps,
   next: SessionRowProps,
 ): boolean {
-  if (prev.isActive !== next.isActive || prev.isEditing !== next.isEditing) {
-    return false;
-  }
-
-  if (
-    prev.isEditing &&
-    next.isEditing &&
-    prev.editingTitle !== next.editingTitle
-  ) {
+  if (prev.isActive !== next.isActive) {
     return false;
   }
 
@@ -279,16 +257,18 @@ export function InboxSidebar({
   const { isMobile, setOpenMobile } = useSidebar();
   const [showArchived, setShowArchived] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
-  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState("");
-  const editInputRef = useRef<HTMLInputElement | null>(null);
+  const [renameDialogSession, setRenameDialogSession] =
+    useState<SessionWithUnread | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (editingSessionId && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
+    if (renameDialogSession && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
     }
-  }, [editingSessionId]);
+  }, [renameDialogSession]);
 
   const activeSessions = useMemo(
     () => sessions.filter((session) => session.status !== "archived"),
@@ -318,28 +298,37 @@ export function InboxSidebar({
     [onSessionPrefetch],
   );
 
-  const handleStartEdit = useCallback((session: SessionWithUnread) => {
-    setEditingSessionId(session.id);
-    setEditingTitle(session.title);
+  const closeRenameDialog = useCallback(() => {
+    setRenameDialogSession(null);
+    setRenameTitle("");
+    setRenaming(false);
   }, []);
 
-  const handleRenameSubmit = useCallback(
-    async (sessionId: string, title: string) => {
-      const trimmed = title.trim();
-      if (!trimmed) {
-        setEditingSessionId(null);
-        return;
-      }
-      try {
-        await onRenameSession(sessionId, trimmed);
-      } catch (err) {
-        console.error("Failed to rename session:", err);
-      } finally {
-        setEditingSessionId(null);
-      }
-    },
-    [onRenameSession],
-  );
+  const handleOpenRenameDialog = useCallback((session: SessionWithUnread) => {
+    setRenameDialogSession(session);
+    setRenameTitle(session.title);
+  }, []);
+
+  const handleRenameSubmit = useCallback(async () => {
+    if (!renameDialogSession) {
+      return;
+    }
+
+    const trimmed = renameTitle.trim();
+    if (!trimmed || trimmed === renameDialogSession.title) {
+      closeRenameDialog();
+      return;
+    }
+
+    setRenaming(true);
+    try {
+      await onRenameSession(renameDialogSession.id, trimmed);
+      closeRenameDialog();
+    } catch (err) {
+      console.error("Failed to rename session:", err);
+      setRenaming(false);
+    }
+  }, [closeRenameDialog, onRenameSession, renameDialogSession, renameTitle]);
 
   return (
     <>
@@ -422,20 +411,69 @@ export function InboxSidebar({
                 key={session.id}
                 session={session}
                 isActive={session.id === activeSessionId}
-                isEditing={editingSessionId === session.id}
-                editingTitle={editingTitle}
-                editInputRef={editInputRef}
                 onSessionClick={handleSessionClick}
                 onSessionPrefetch={handleSessionPrefetch}
-                onStartEdit={handleStartEdit}
-                onEditTitleChange={setEditingTitle}
-                onRenameSubmit={handleRenameSubmit}
-                onCancelEdit={() => setEditingSessionId(null)}
+                onOpenRenameDialog={handleOpenRenameDialog}
               />
             ))}
           </div>
         )}
       </div>
+
+      <Dialog
+        open={Boolean(renameDialogSession)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeRenameDialog();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit session</DialogTitle>
+            <DialogDescription>
+              Update the session name shown in your sidebar.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleRenameSubmit();
+            }}
+            className="space-y-4"
+          >
+            <Input
+              ref={renameInputRef}
+              value={renameTitle}
+              onChange={(e) => setRenameTitle(e.target.value)}
+              placeholder="Session title"
+              maxLength={120}
+              disabled={renaming}
+            />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeRenameDialog}
+                disabled={renaming}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  renaming ||
+                  !renameDialogSession ||
+                  !renameTitle.trim() ||
+                  renameTitle.trim() === renameDialogSession.title
+                }
+              >
+                {renaming ? "Saving..." : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <NewSessionDialog
         open={newSessionOpen}
