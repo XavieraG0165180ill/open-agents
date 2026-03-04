@@ -2235,7 +2235,7 @@ export function SessionChatContent(_props: unknown) {
                 : "hover:bg-muted/50",
             )}
           >
-            <span className="truncate text-sm font-medium">
+            <span className="min-w-0 flex-1 pr-2 text-sm font-medium whitespace-normal break-words">
               {chat.title || "Untitled"}
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
