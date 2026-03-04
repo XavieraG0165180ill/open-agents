@@ -58,6 +58,11 @@ bun test path/to/file.test.ts   # Run single test file
 bun test --watch                # Watch mode
 ```
 
+**CI/script execution rules:**
+
+- Run project checks through package scripts (for example `bun run ci`, `bun run --cwd apps/web db:check`).
+- Prefer `bun run <script>` over invoking tool binaries directly (`bunx`, `bun x`, `tsc`, `eslint`, etc.) so local runs match CI behavior.
+
 ## Git Commands
 
 **Quote paths with special characters**: File paths containing brackets (like Next.js dynamic routes `[id]`, `[slug]`) are interpreted as glob patterns by zsh. Always quote these paths in git commands:
