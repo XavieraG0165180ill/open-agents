@@ -132,8 +132,12 @@ export async function POST(req: Request) {
   // ============================================
   // Best-effort: never block sandbox creation on Vercel resolution failures.
   // Only runs for new sandbox creation (reconnect path returns early below).
-  const repoOwner = sessionRecord?.repoOwner ?? (repoUrl ? parseGitHubUrl(repoUrl)?.owner : undefined);
-  const repoName = sessionRecord?.repoName ?? (repoUrl ? parseGitHubUrl(repoUrl)?.repo : undefined);
+  const repoOwner =
+    sessionRecord?.repoOwner ??
+    (repoUrl ? parseGitHubUrl(repoUrl)?.owner : undefined);
+  const repoName =
+    sessionRecord?.repoName ??
+    (repoUrl ? parseGitHubUrl(repoUrl)?.repo : undefined);
 
   if (!providedSandboxId && repoOwner && repoName) {
     try {
@@ -153,7 +157,10 @@ export async function POST(req: Request) {
         }
       }
     } catch (error) {
-      console.error("[Sandbox] Vercel env resolution failed (non-blocking):", error);
+      console.error(
+        "[Sandbox] Vercel env resolution failed (non-blocking):",
+        error,
+      );
     }
   }
 

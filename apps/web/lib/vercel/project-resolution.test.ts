@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 mock.module("server-only", () => ({}));
 
@@ -11,8 +11,16 @@ let fetchResponse: { ok: boolean; status: number; body: unknown } = {
 };
 
 const originalFetch = globalThis.fetch;
-globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
-  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+globalThis.fetch = (async (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => {
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
   fetchCalls.push({ url, init });
   return {
     ok: fetchResponse.ok,
@@ -20,9 +28,13 @@ globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => 
     text: async () => JSON.stringify(fetchResponse.body),
     json: async () => fetchResponse.body,
   } as Response;
-};
+}) as typeof globalThis.fetch;
 
 const { resolveVercelProject } = await import("./project-resolution");
+
+afterAll(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("resolveVercelProject", () => {
   beforeEach(() => {
@@ -127,9 +139,9 @@ describe("resolveVercelProject", () => {
   test("returns api_error on network failure", async () => {
     // Temporarily override fetch to throw
     const savedFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    globalThis.fetch = (async () => {
       throw new Error("network down");
-    };
+    }) as unknown as typeof globalThis.fetch;
 
     const result = await resolveVercelProject({
       vercelToken: "tok_test",

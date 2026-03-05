@@ -28,7 +28,12 @@ let sessionRecord: TestSessionRecord;
 let vercelToken: string | null = null;
 let vercelProjectResult: {
   ok: boolean;
-  project?: { projectId: string; projectName: string; orgId: string; orgSlug?: string };
+  project?: {
+    projectId: string;
+    projectName: string;
+    orgId: string;
+    orgSlug?: string;
+  };
   reason?: string;
   message?: string;
 } = { ok: false, reason: "no_vercel_auth" };
@@ -366,9 +371,11 @@ describe("/api/sandbox lifecycle kicks", () => {
     // On reconnect, the env should NOT contain Vercel vars
     // (reconnect path skips Vercel resolution because providedSandboxId is set,
     // but env dict is shared — the guard is !providedSandboxId in the condition)
-    const config = connectConfigs[connectConfigs.length - 1] as {
-      options?: { env?: Record<string, string> };
-    } | undefined;
+    const config = connectConfigs[connectConfigs.length - 1] as
+      | {
+          options?: { env?: Record<string, string> };
+        }
+      | undefined;
 
     expect(config?.options?.env?.VERCEL_TOKEN).toBeUndefined();
     expect(config?.options?.env?.VERCEL_PROJECT_ID).toBeUndefined();
