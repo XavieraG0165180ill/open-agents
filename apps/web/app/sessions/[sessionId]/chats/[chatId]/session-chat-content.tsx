@@ -193,6 +193,12 @@ interface GroupedRenderMessage {
   isStreaming: boolean;
 }
 
+type QueuedComposerMessage = {
+  id: string;
+  text: string;
+  files?: FileUIPart[];
+};
+
 function getPartIdentity(part: WebAgentUIMessagePart): string {
   if (isToolUIPart(part)) {
     return part.toolCallId ? `tool:${part.toolCallId}` : `tool:${part.type}`;
@@ -725,6 +731,11 @@ export function SessionChatContent(_props: unknown) {
     switchChat: mobileSwitchChat,
   } = useSessionLayout();
   const [input, setInput] = useState("");
+  const [queuedMessages, setQueuedMessages] = useState<QueuedComposerMessage[]>(
+    [],
+  );
+  const queuedMessageIdRef = useRef(0);
+  const queuedMessageSendInFlightRef = useRef(false);
   const [isCreatingSandbox, setIsCreatingSandbox] = useState(false);
   const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
   const [isUnarchiving, setIsUnarchiving] = useState(false);
@@ -2227,6 +2238,168 @@ export function SessionChatContent(_props: unknown) {
     window.open(targetUrl, "_blank", "noopener,noreferrer");
   };
 
+  const sendQueuedMessage = useCallback(
+    async (queuedMessage: QueuedComposerMessage) => {
+      const messageText = queuedMessage.text;
+      const files = queuedMessage.files;
+      const isFirstChatInSession =
+        !mobileChatsLoading &&
+        mobileChats.length === 1 &&
+        mobileChats[0]?.id === chatInfo.id;
+      const shouldSetOptimisticTitle =
+        isFirstChatInSession && !hadInitialMessages && messages.length === 0;
+      const trimmedText = messageText.trim();
+      const shouldGenerateSessionTitle =
+        shouldSetOptimisticTitle &&
+        trimmedText.length > 0 &&
+        !hasRequestedSessionTitleGenerationRef.current;
+
+      if (shouldSetOptimisticTitle && trimmedText.length > 0) {
+        const nextTitle =
+          trimmedText.length > 30
+            ? `${trimmedText.slice(0, 30)}...`
+            : trimmedText;
+        pendingOptimisticTitleChatIdRef.current = chatInfo.id;
+        void setChatTitle(chatInfo.id, nextTitle);
+
+        if (shouldGenerateSessionTitle) {
+          hasRequestedSessionTitleGenerationRef.current = true;
+          // Generate a title in parallel and persist it as soon as it
+          // resolves, without waiting for the assistant response.
+          const generatedTitlePromise = fetch("/api/generate-title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: trimmedText }),
+          })
+            .then(async (res) => {
+              if (!res.ok) {
+                return null;
+              }
+
+              const data = (await res.json().catch(() => null)) as {
+                title?: unknown;
+              } | null;
+              if (typeof data?.title !== "string") {
+                return null;
+              }
+
+              const title = data.title.trim();
+              return title.length > 0 ? title : null;
+            })
+            .catch(() => null);
+
+          void generatedTitlePromise
+            .then((generatedTitle) => {
+              if (!generatedTitle) {
+                return;
+              }
+              return updateSessionTitle(generatedTitle);
+            })
+            .catch(() => {
+              // Ignore failures and keep the existing session title.
+            });
+        }
+      }
+
+      setHasPendingResponse(true);
+      hasSeenAssistantRenderableContentRef.current = false;
+      void setChatStreaming(chatInfo.id, true);
+      try {
+        await sendMessage({ text: messageText, files });
+      } catch (err) {
+        if (pendingOptimisticTitleChatIdRef.current) {
+          void clearChatTitle(pendingOptimisticTitleChatIdRef.current);
+          pendingOptimisticTitleChatIdRef.current = null;
+        }
+        setHasPendingResponse(false);
+        void setChatStreaming(chatInfo.id, false);
+        console.error("Failed to send message:", err);
+      }
+    },
+    [
+      mobileChatsLoading,
+      mobileChats,
+      chatInfo.id,
+      hadInitialMessages,
+      messages.length,
+      setChatTitle,
+      updateSessionTitle,
+      setChatStreaming,
+      sendMessage,
+      clearChatTitle,
+    ],
+  );
+
+  const queueComposerMessage = useCallback(() => {
+    if (isArchived || !isSandboxActive) {
+      return;
+    }
+
+    const hasContent = input.trim() || images.length > 0;
+    if (!hasContent) {
+      return;
+    }
+
+    const messageText = input;
+    const files = getFileParts();
+    setInput("");
+    clearImages();
+
+    setQueuedMessages((prev) => {
+      queuedMessageIdRef.current += 1;
+      return [
+        ...prev,
+        {
+          id: `queued-${queuedMessageIdRef.current}`,
+          text: messageText,
+          files,
+        },
+      ];
+    });
+  }, [
+    isArchived,
+    isSandboxActive,
+    input,
+    images.length,
+    getFileParts,
+    clearImages,
+  ]);
+
+  useEffect(() => {
+    if (status !== "ready") {
+      return;
+    }
+    if (isChatInFlight || hasPendingResponse) {
+      return;
+    }
+    if (isArchived || !isSandboxActive) {
+      return;
+    }
+    if (queuedMessageSendInFlightRef.current) {
+      return;
+    }
+
+    const nextMessage = queuedMessages[0];
+    if (!nextMessage) {
+      return;
+    }
+
+    queuedMessageSendInFlightRef.current = true;
+    setQueuedMessages((prev) => prev.slice(1));
+
+    void sendQueuedMessage(nextMessage).finally(() => {
+      queuedMessageSendInFlightRef.current = false;
+    });
+  }, [
+    status,
+    isChatInFlight,
+    hasPendingResponse,
+    isArchived,
+    isSandboxActive,
+    queuedMessages,
+    sendQueuedMessage,
+  ]);
+
   const chatSwitcherContent = (
     <div
       className={cn(
@@ -2989,92 +3162,9 @@ export function SessionChatContent(_props: unknown) {
               />
             )}
             <form
-              onSubmit={async (e) => {
+              onSubmit={(e) => {
                 e.preventDefault();
-                if (isArchived || !isSandboxActive) return;
-                const hasContent = input.trim() || images.length > 0;
-                if (!hasContent) return;
-
-                const messageText = input;
-                const files = getFileParts();
-                setInput("");
-                clearImages();
-
-                const isFirstChatInSession =
-                  !mobileChatsLoading &&
-                  mobileChats.length === 1 &&
-                  mobileChats[0]?.id === chatInfo.id;
-                const shouldSetOptimisticTitle =
-                  isFirstChatInSession &&
-                  !hadInitialMessages &&
-                  messages.length === 0;
-                const trimmedText = messageText.trim();
-                const shouldGenerateSessionTitle =
-                  shouldSetOptimisticTitle &&
-                  trimmedText.length > 0 &&
-                  !hasRequestedSessionTitleGenerationRef.current;
-                if (shouldSetOptimisticTitle && trimmedText.length > 0) {
-                  const nextTitle =
-                    trimmedText.length > 30
-                      ? `${trimmedText.slice(0, 30)}...`
-                      : trimmedText;
-                  pendingOptimisticTitleChatIdRef.current = chatInfo.id;
-                  void setChatTitle(chatInfo.id, nextTitle);
-
-                  if (shouldGenerateSessionTitle) {
-                    hasRequestedSessionTitleGenerationRef.current = true;
-                    // Generate a title in parallel and persist it as soon as it
-                    // resolves, without waiting for the assistant response.
-                    const generatedTitlePromise = fetch("/api/generate-title", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ message: trimmedText }),
-                    })
-                      .then(async (res) => {
-                        if (!res.ok) {
-                          return null;
-                        }
-
-                        const data = (await res.json().catch(() => null)) as {
-                          title?: unknown;
-                        } | null;
-                        if (typeof data?.title !== "string") {
-                          return null;
-                        }
-
-                        const title = data.title.trim();
-                        return title.length > 0 ? title : null;
-                      })
-                      .catch(() => null);
-
-                    void generatedTitlePromise
-                      .then((generatedTitle) => {
-                        if (!generatedTitle) {
-                          return;
-                        }
-                        return updateSessionTitle(generatedTitle);
-                      })
-                      .catch(() => {
-                        // Ignore failures and keep the existing session title.
-                      });
-                  }
-                }
-                setHasPendingResponse(true);
-                hasSeenAssistantRenderableContentRef.current = false;
-                void setChatStreaming(chatInfo.id, true);
-                try {
-                  await sendMessage({ text: messageText, files });
-                } catch (err) {
-                  if (pendingOptimisticTitleChatIdRef.current) {
-                    void clearChatTitle(
-                      pendingOptimisticTitleChatIdRef.current,
-                    );
-                    pendingOptimisticTitleChatIdRef.current = null;
-                  }
-                  setHasPendingResponse(false);
-                  void setChatStreaming(chatInfo.id, false);
-                  console.error("Failed to send message:", err);
-                }
+                queueComposerMessage();
               }}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -3115,6 +3205,43 @@ export function SessionChatContent(_props: unknown) {
 
               {/* Image attachments preview */}
               <ImageAttachmentsPreview images={images} onRemove={removeImage} />
+
+              {queuedMessages.length > 0 && (
+                <div className="space-y-2 px-4 pb-1 pt-3">
+                  {queuedMessages.map((queuedMessage, index) => {
+                    const trimmedText = queuedMessage.text.trim();
+                    const imageCount = queuedMessage.files?.length ?? 0;
+
+                    return (
+                      <div
+                        key={queuedMessage.id}
+                        className="rounded-xl border border-border/60 bg-background/80 px-3 py-2"
+                      >
+                        {trimmedText.length > 0 ? (
+                          <p className="whitespace-pre-wrap break-words text-sm text-foreground">
+                            {queuedMessage.text}
+                          </p>
+                        ) : (
+                          <p className="text-sm text-foreground">
+                            Queued image attachment
+                          </p>
+                        )}
+                        {imageCount > 0 && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {imageCount} image{imageCount === 1 ? "" : "s"}{" "}
+                            attached
+                          </p>
+                        )}
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {index === 0
+                            ? "Queued — sends when the current response finishes"
+                            : `Queued #${index + 1}`}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Textarea area */}
               <div className="px-4 pb-2 pt-3">
@@ -3164,7 +3291,7 @@ export function SessionChatContent(_props: unknown) {
                       }
                     }
                   }}
-                  disabled={isArchived || isChatInFlight}
+                  disabled={isArchived}
                   className="w-full resize-none overflow-y-auto bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none"
                   style={{ minHeight: "24px" }}
                 />
