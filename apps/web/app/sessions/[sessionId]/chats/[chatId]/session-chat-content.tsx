@@ -8,6 +8,7 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Circle,
   Copy,
   EllipsisVertical,
   ExternalLink,
@@ -2368,6 +2369,15 @@ export function SessionChatContent(_props: unknown) {
     chatInfo.id,
   ]);
 
+  const removeQueuedMessage = useCallback(
+    (queuedMessageId: string) => {
+      setQueuedMessagesForChat(chatInfo.id, (previousMessages) =>
+        previousMessages.filter((message) => message.id !== queuedMessageId),
+      );
+    },
+    [setQueuedMessagesForChat, chatInfo.id],
+  );
+
   useEffect(() => {
     if (status !== "ready") {
       return;
@@ -3214,39 +3224,50 @@ export function SessionChatContent(_props: unknown) {
               <ImageAttachmentsPreview images={images} onRemove={removeImage} />
 
               {queuedMessages.length > 0 && (
-                <div className="space-y-2 px-4 pb-1 pt-3">
-                  {queuedMessages.map((queuedMessage, index) => {
-                    const trimmedText = queuedMessage.text.trim();
-                    const imageCount = queuedMessage.files?.length ?? 0;
+                <div className="px-4 pb-1 pt-2">
+                  <div className="rounded-2xl border border-border/70 bg-background/60 p-2">
+                    {queuedMessages.map((queuedMessage, index) => {
+                      const trimmedText = queuedMessage.text.trim();
+                      const imageCount = queuedMessage.files?.length ?? 0;
+                      const baseLabel =
+                        trimmedText.length > 0
+                          ? trimmedText
+                          : "Queued image attachment";
+                      const label =
+                        imageCount > 0 && trimmedText.length > 0
+                          ? `${baseLabel} (${imageCount} image${imageCount === 1 ? "" : "s"})`
+                          : baseLabel;
 
-                    return (
-                      <div
-                        key={queuedMessage.id}
-                        className="rounded-xl border border-border/60 bg-background/80 px-3 py-2"
-                      >
-                        {trimmedText.length > 0 ? (
-                          <p className="whitespace-pre-wrap break-words text-sm text-foreground">
-                            {queuedMessage.text}
-                          </p>
-                        ) : (
-                          <p className="text-sm text-foreground">
-                            Queued image attachment
-                          </p>
-                        )}
-                        {imageCount > 0 && (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {imageCount} image{imageCount === 1 ? "" : "s"}{" "}
-                            attached
-                          </p>
-                        )}
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {index === 0
-                            ? "Queued — sends when the current response finishes"
-                            : `Queued #${index + 1}`}
-                        </p>
-                      </div>
-                    );
-                  })}
+                      return (
+                        <div key={queuedMessage.id}>
+                          <div className="group flex items-center gap-3 rounded-xl bg-muted/35 px-3 py-2 transition-colors hover:bg-muted/80">
+                            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground/70">
+                              <Circle className="h-4 w-4" />
+                            </span>
+                            <p
+                              className="min-w-0 flex-1 truncate text-sm text-foreground"
+                              title={label}
+                            >
+                              {label}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeQueuedMessage(queuedMessage.id)
+                              }
+                              aria-label="Remove queued message"
+                              className="shrink-0 rounded p-1 text-muted-foreground/70 transition hover:bg-background hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                          {index < queuedMessages.length - 1 && (
+                            <div className="mx-3 my-1 h-px bg-border/70" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
