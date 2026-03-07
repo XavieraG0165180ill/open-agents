@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import type { Chat, Session } from "@/lib/db/schema";
 import { fetcher } from "@/lib/swr";
@@ -43,6 +44,41 @@ interface CreateSessionResponse {
   chat: Chat;
 }
 
+function cloneSessionsResponse(
+  current: SessionsResponse | undefined,
+): SessionsResponse | undefined {
+  if (!current) {
+    return undefined;
+  }
+
+  return {
+    sessions: current.sessions.map((session) => ({ ...session })),
+    archivedCount: current.archivedCount,
+  };
+}
+
+function mergeSessionWithSummary(
+  session: SessionWithUnread,
+  updatedSession: Session,
+): SessionWithUnread {
+  return {
+    id: updatedSession.id,
+    title: updatedSession.title,
+    status: updatedSession.status,
+    repoName: updatedSession.repoName,
+    branch: updatedSession.branch,
+    linesAdded: updatedSession.linesAdded,
+    linesRemoved: updatedSession.linesRemoved,
+    prNumber: updatedSession.prNumber,
+    prStatus: updatedSession.prStatus,
+    createdAt: updatedSession.createdAt,
+    hasUnread: session.hasUnread,
+    hasStreaming: session.hasStreaming,
+    latestChatId: session.latestChatId,
+    lastActivityAt: session.lastActivityAt,
+  };
+}
+
 export function useSessions(options?: {
   enabled?: boolean;
   includeArchived?: boolean;
@@ -75,120 +111,235 @@ export function useSessions(options?: {
   const sessions = data?.sessions ?? [];
   const archivedCount = data?.archivedCount ?? 0;
 
-  const createSession = async (input: CreateSessionInput) => {
-    const res = await fetch("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    });
+  const createSession = useCallback(
+    async (input: CreateSessionInput) => {
+      const res = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
 
-    const responseData = (await res.json()) as {
-      session?: Session;
-      chat?: Chat;
-      error?: string;
-    };
+      const responseData = (await res.json()) as {
+        session?: Session;
+        chat?: Chat;
+        error?: string;
+      };
 
-    if (!res.ok || !responseData.session || !responseData.chat) {
-      throw new Error(responseData.error ?? "Failed to create session");
-    }
+      if (!res.ok || !responseData.session || !responseData.chat) {
+        throw new Error(responseData.error ?? "Failed to create session");
+      }
 
-    const createdSession = responseData.session;
-    const createdChat = responseData.chat;
+      const createdSession = responseData.session;
+      const createdChat = responseData.chat;
 
-    void globalMutate(
-      `/api/sessions/${createdSession.id}/chats`,
-      {
-        chats: [
-          {
-            ...createdChat,
-            hasUnread: false,
-            isStreaming: false,
-          },
-        ],
-        defaultModelId: createdChat.modelId,
-      },
-      { revalidate: false },
-    );
+      void globalMutate(
+        `/api/sessions/${createdSession.id}/chats`,
+        {
+          chats: [
+            {
+              ...createdChat,
+              hasUnread: false,
+              isStreaming: false,
+            },
+          ],
+          defaultModelId: createdChat.modelId,
+        },
+        { revalidate: false },
+      );
 
-    await mutate(
-      (current) => ({
-        sessions: [
-          {
-            ...createdSession,
-            hasUnread: false,
-            hasStreaming: false,
-            latestChatId: createdChat.id,
-            lastActivityAt: createdChat.updatedAt,
-          },
-          ...(current?.sessions ?? []),
-        ],
-        archivedCount: current?.archivedCount,
-      }),
-      { revalidate: false },
-    );
+      await mutate(
+        (current) => ({
+          sessions: [
+            {
+              ...createdSession,
+              hasUnread: false,
+              hasStreaming: false,
+              latestChatId: createdChat.id,
+              lastActivityAt: createdChat.updatedAt,
+            },
+            ...(current?.sessions ?? []),
+          ],
+          archivedCount: current?.archivedCount,
+        }),
+        { revalidate: false },
+      );
 
-    return {
-      session: createdSession,
-      chat: createdChat,
-    } satisfies CreateSessionResponse;
-  };
+      return {
+        session: createdSession,
+        chat: createdChat,
+      } satisfies CreateSessionResponse;
+    },
+    [globalMutate, mutate],
+  );
 
-  const archiveSession = async (sessionId: string) => {
-    const res = await fetch(`/api/sessions/${sessionId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "archived" }),
-    });
+  const renameSession = useCallback(
+    async (sessionId: string, title: string) => {
+      const previousData = cloneSessionsResponse(data);
 
-    const responseData = (await res.json()) as {
-      session?: Session;
-      error?: string;
-    };
-
-    if (!res.ok) {
-      throw new Error(responseData.error ?? "Failed to archive session");
-    }
-
-    if (responseData.session) {
-      const updatedSession = responseData.session;
       await mutate(
         (current) => {
           if (!current) {
             return current;
           }
 
-          if (!includeArchived) {
-            const hadSession = current.sessions.some((s) => s.id === sessionId);
+          return {
+            ...current,
+            sessions: current.sessions.map((session) =>
+              session.id === sessionId ? { ...session, title } : session,
+            ),
+          };
+        },
+        { revalidate: false },
+      );
+
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title }),
+        });
+
+        const responseData = (await res.json()) as {
+          session?: Session;
+          error?: string;
+        };
+
+        if (!res.ok || !responseData.session) {
+          throw new Error(responseData.error ?? "Failed to rename session");
+        }
+
+        const updatedSession = responseData.session;
+
+        await mutate(
+          (current) => {
+            if (!current) {
+              return current;
+            }
+
             return {
               ...current,
-              sessions: current.sessions.filter((s) => s.id !== sessionId),
-              archivedCount: hadSession
-                ? (current.archivedCount ?? 0) + 1
-                : current.archivedCount,
+              sessions: current.sessions.map((session) =>
+                session.id === sessionId
+                  ? mergeSessionWithSummary(session, updatedSession)
+                  : session,
+              ),
+            };
+          },
+          { revalidate: false },
+        );
+
+        return updatedSession;
+      } catch (error) {
+        if (previousData) {
+          await mutate(previousData, { revalidate: false });
+        } else {
+          void mutate();
+        }
+
+        throw error;
+      }
+    },
+    [data, mutate],
+  );
+
+  const archiveSession = useCallback(
+    async (sessionId: string) => {
+      const previousData = cloneSessionsResponse(data);
+      const sessionToArchive = previousData?.sessions.find(
+        (session) => session.id === sessionId,
+      );
+      const hadSession = Boolean(sessionToArchive);
+      const wasArchived = sessionToArchive?.status === "archived";
+
+      await mutate(
+        (current) => {
+          if (!current) {
+            return current;
+          }
+
+          const nextArchivedCount =
+            hadSession && !wasArchived
+              ? (current.archivedCount ?? 0) + 1
+              : current.archivedCount;
+
+          if (!includeArchived) {
+            return {
+              ...current,
+              sessions: current.sessions.filter(
+                (session) => session.id !== sessionId,
+              ),
+              archivedCount: nextArchivedCount,
             };
           }
 
           return {
             ...current,
+            archivedCount: nextArchivedCount,
             sessions: current.sessions.map((session) =>
               session.id === sessionId
-                ? {
-                    ...updatedSession,
-                    hasUnread: session.hasUnread,
-                    hasStreaming: session.hasStreaming,
-                    latestChatId: session.latestChatId,
-                    lastActivityAt: session.lastActivityAt,
-                  }
+                ? { ...session, status: "archived" }
                 : session,
             ),
           };
         },
-        { revalidate: true },
+        { revalidate: false },
       );
-    }
 
-    return responseData.session;
-  };
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "archived" }),
+        });
+
+        const responseData = (await res.json()) as {
+          session?: Session;
+          error?: string;
+        };
+
+        if (!res.ok) {
+          throw new Error(responseData.error ?? "Failed to archive session");
+        }
+
+        if (responseData.session) {
+          const updatedSession = responseData.session;
+
+          await mutate(
+            (current) => {
+              if (!current) {
+                return current;
+              }
+
+              if (!includeArchived) {
+                return current;
+              }
+
+              return {
+                ...current,
+                sessions: current.sessions.map((session) =>
+                  session.id === sessionId
+                    ? mergeSessionWithSummary(session, updatedSession)
+                    : session,
+                ),
+              };
+            },
+            { revalidate: false },
+          );
+        }
+
+        return responseData.session;
+      } catch (error) {
+        if (previousData) {
+          await mutate(previousData, { revalidate: false });
+        } else {
+          void mutate();
+        }
+
+        throw error;
+      }
+    },
+    [data, includeArchived, mutate],
+  );
 
   return {
     sessions,
@@ -196,6 +347,7 @@ export function useSessions(options?: {
     loading: isLoading,
     error,
     createSession,
+    renameSession,
     archiveSession,
     refreshSessions: mutate,
   };

@@ -14,7 +14,6 @@ import {
   getValidRenameTitle,
   isRenameSaveDisabled,
 } from "@/components/inbox-sidebar-rename";
-import { NewSessionDialog } from "@/components/new-session-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,15 +36,6 @@ import { useSession } from "@/hooks/use-session";
 import type { SessionWithUnread } from "@/hooks/use-sessions";
 import type { Session as AuthSession } from "@/lib/session/types";
 
-type CreateSessionInput = {
-  repoOwner?: string;
-  repoName?: string;
-  branch?: string;
-  cloneUrl?: string;
-  isNewBranch: boolean;
-  sandboxType: "hybrid" | "vercel" | "just-bash";
-};
-
 type InboxSidebarProps = {
   sessions: SessionWithUnread[];
   archivedCount: number;
@@ -55,11 +45,7 @@ type InboxSidebarProps = {
   onSessionPrefetch: (session: SessionWithUnread) => void;
   onRenameSession: (sessionId: string, title: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
-  createSession: (input: CreateSessionInput) => Promise<{
-    session: { id: string };
-    chat: { id: string };
-  }>;
-  lastRepo: { owner: string; repo: string } | null;
+  onOpenNewSession: () => void;
   initialUser?: AuthSession["user"];
 };
 
@@ -297,8 +283,7 @@ export function InboxSidebar({
   onSessionPrefetch,
   onRenameSession,
   onArchiveSession,
-  createSession,
-  lastRepo,
+  onOpenNewSession,
   initialUser,
 }: InboxSidebarProps) {
   const router = useRouter();
@@ -314,7 +299,7 @@ export function InboxSidebar({
   >(null);
   const [hasMoreArchivedSessions, setHasMoreArchivedSessions] = useState(false);
   const archivedRequestInFlightRef = useRef(false);
-  const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const lastLoadedArchivedCountRef = useRef(0);
   const [renameDialogSession, setRenameDialogSession] =
     useState<SessionWithUnread | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
@@ -356,6 +341,7 @@ export function InboxSidebar({
 
           return [...current, ...nextSessions];
         });
+        lastLoadedArchivedCountRef.current = data.archivedCount;
         setHasMoreArchivedSessions(Boolean(data.pagination?.hasMore));
       } catch (error) {
         const message =
@@ -387,6 +373,11 @@ export function InboxSidebar({
       setArchivedSessions([]);
       setHasMoreArchivedSessions(false);
       setArchivedSessionsError(null);
+      lastLoadedArchivedCountRef.current = 0;
+      return;
+    }
+
+    if (lastLoadedArchivedCountRef.current === archivedCount) {
       return;
     }
 
@@ -421,11 +412,33 @@ export function InboxSidebar({
     async (session: SessionWithUnread) => {
       try {
         await onArchiveSession(session.id);
+        lastLoadedArchivedCountRef.current = Math.max(
+          lastLoadedArchivedCountRef.current + 1,
+          archivedCount + 1,
+        );
+        setArchivedSessions((current) => {
+          const nextSessions = [
+            { ...session, status: "archived" as const },
+            ...current.filter(
+              (existingSession) => existingSession.id !== session.id,
+            ),
+          ];
+          const maxCachedSessions = Math.max(
+            current.length,
+            ARCHIVED_SESSIONS_PAGE_SIZE,
+          );
+
+          return nextSessions.slice(0, maxCachedSessions);
+        });
+        setHasMoreArchivedSessions(
+          (currentHasMore) =>
+            currentHasMore || archivedCount + 1 > ARCHIVED_SESSIONS_PAGE_SIZE,
+        );
       } catch (err) {
         console.error("Failed to archive session:", err);
       }
     },
-    [onArchiveSession],
+    [archivedCount, onArchiveSession],
   );
 
   const handleLoadMoreArchivedSessions = useCallback(() => {
@@ -507,7 +520,7 @@ export function InboxSidebar({
             type="button"
             variant="ghost"
             size="icon"
-            onClick={() => setNewSessionOpen(true)}
+            onClick={onOpenNewSession}
             className="h-7 w-7"
           >
             <Plus className="h-4 w-4" />
@@ -705,13 +718,6 @@ export function InboxSidebar({
           </form>
         </DialogContent>
       </Dialog>
-
-      <NewSessionDialog
-        open={newSessionOpen}
-        onOpenChange={setNewSessionOpen}
-        lastRepo={lastRepo}
-        createSession={createSession}
-      />
     </>
   );
 }
