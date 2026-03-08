@@ -34,17 +34,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSession } from "@/hooks/use-session";
-import type { SessionWithUnread } from "@/hooks/use-sessions";
+import type {
+  CreateSessionInput,
+  SessionWithUnread,
+} from "@/hooks/use-sessions";
 import type { Session as AuthSession } from "@/lib/session/types";
-
-type CreateSessionInput = {
-  repoOwner?: string;
-  repoName?: string;
-  branch?: string;
-  cloneUrl?: string;
-  isNewBranch: boolean;
-  sandboxType: "hybrid" | "vercel" | "just-bash";
-};
 
 type InboxSidebarProps = {
   sessions: SessionWithUnread[];

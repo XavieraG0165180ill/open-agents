@@ -2,23 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import type { SandboxType } from "@/components/sandbox-selector-compact";
 import { SessionStarter } from "@/components/session-starter";
+import type { CreateSessionInput } from "@/hooks/use-sessions";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-type CreateSessionInput = {
-  repoOwner?: string;
-  repoName?: string;
-  branch?: string;
-  cloneUrl?: string;
-  isNewBranch: boolean;
-  sandboxType: SandboxType;
-};
 
 interface NewSessionDialogProps {
   open: boolean;

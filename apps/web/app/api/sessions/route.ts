@@ -5,9 +5,14 @@ import {
   getSessionsWithUnreadByUserId,
   getUsedSessionTitles,
 } from "@/lib/db/sessions";
+import {
+  getVercelProjectLinkForRepo,
+  upsertVercelProjectLink,
+} from "@/lib/db/vercel-project-links";
 import { getUserPreferences } from "@/lib/db/user-preferences";
 import { getRandomCityName } from "@/lib/random-city";
 import { getServerSession } from "@/lib/session/get-server-session";
+import type { VercelProjectSelection } from "@/lib/vercel/types";
 
 interface CreateSessionRequest {
   title?: string;
@@ -17,6 +22,7 @@ interface CreateSessionRequest {
   cloneUrl?: string;
   isNewBranch?: boolean;
   sandboxType?: "hybrid" | "vercel" | "just-bash";
+  vercelProject?: VercelProjectSelection | null;
 }
 
 function generateBranchName(username: string, name?: string | null): string {
@@ -44,6 +50,38 @@ async function resolveSessionTitle(
   }
   const usedNames = await getUsedSessionTitles(userId);
   return getRandomCityName(usedNames);
+}
+
+async function resolveVercelProjectForSession(
+  userId: string,
+  repoOwner: string | undefined,
+  repoName: string | undefined,
+  requestedProject: VercelProjectSelection | null | undefined,
+): Promise<VercelProjectSelection | null> {
+  if (requestedProject !== undefined) {
+    return requestedProject;
+  }
+
+  if (!repoOwner || !repoName) {
+    return null;
+  }
+
+  const savedLink = await getVercelProjectLinkForRepo(
+    userId,
+    repoOwner,
+    repoName,
+  );
+
+  if (!savedLink) {
+    return null;
+  }
+
+  return {
+    projectId: savedLink.projectId,
+    projectName: savedLink.projectName,
+    teamId: savedLink.teamId,
+    teamSlug: savedLink.teamSlug,
+  };
 }
 
 const DEFAULT_ARCHIVED_SESSIONS_LIMIT = 50;
@@ -162,6 +200,7 @@ export async function POST(req: Request) {
     cloneUrl,
     isNewBranch,
     sandboxType = "hybrid",
+    vercelProject,
   } = body;
 
   let finalBranch = branch;
@@ -172,6 +211,13 @@ export async function POST(req: Request) {
   try {
     const title = await resolveSessionTitle(body, session.user.id);
     const preferences = await getUserPreferences(session.user.id);
+    const resolvedVercelProject = await resolveVercelProjectForSession(
+      session.user.id,
+      repoOwner,
+      repoName,
+      vercelProject,
+    );
+
     const result = await createSessionWithInitialChat({
       session: {
         id: nanoid(),
@@ -183,6 +229,10 @@ export async function POST(req: Request) {
         branch: finalBranch,
         cloneUrl,
         isNewBranch: isNewBranch ?? false,
+        vercelProjectId: resolvedVercelProject?.projectId,
+        vercelProjectName: resolvedVercelProject?.projectName,
+        vercelTeamId: resolvedVercelProject?.teamId ?? null,
+        vercelTeamSlug: resolvedVercelProject?.teamSlug ?? null,
         sandboxState: { type: sandboxType },
         lifecycleState: "provisioning",
         lifecycleVersion: 0,
@@ -193,6 +243,25 @@ export async function POST(req: Request) {
         modelId: preferences.defaultModelId,
       },
     });
+
+    if (vercelProject && repoOwner && repoName) {
+      try {
+        await upsertVercelProjectLink({
+          userId: session.user.id,
+          repoOwner,
+          repoName,
+          projectId: vercelProject.projectId,
+          projectName: vercelProject.projectName,
+          teamId: vercelProject.teamId ?? null,
+          teamSlug: vercelProject.teamSlug ?? null,
+        });
+      } catch (linkError) {
+        console.error(
+          "Failed to remember Vercel project link for repository:",
+          linkError,
+        );
+      }
+    }
 
     return Response.json(result);
   } catch (error) {

@@ -3,6 +3,7 @@
 import useSWR, { useSWRConfig } from "swr";
 import type { Chat, Session } from "@/lib/db/schema";
 import { fetcher } from "@/lib/swr";
+import type { VercelProjectSelection } from "@/lib/vercel/types";
 
 export type SessionWithUnread = Pick<
   Session,
@@ -23,7 +24,7 @@ export type SessionWithUnread = Pick<
   lastActivityAt: Session["createdAt"];
 };
 
-interface CreateSessionInput {
+export interface CreateSessionInput {
   title?: string;
   repoOwner?: string;
   repoName?: string;
@@ -31,6 +32,7 @@ interface CreateSessionInput {
   cloneUrl?: string;
   isNewBranch: boolean;
   sandboxType: "hybrid" | "vercel" | "just-bash";
+  vercelProject?: VercelProjectSelection | null;
 }
 
 interface SessionsResponse {

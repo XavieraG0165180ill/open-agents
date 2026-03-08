@@ -118,6 +118,11 @@ export const sessions = pgTable(
     repoName: text("repo_name"),
     branch: text("branch"),
     cloneUrl: text("clone_url"),
+    // Optional Vercel project link used to sync `.env.local` on sandbox creation
+    vercelProjectId: text("vercel_project_id"),
+    vercelProjectName: text("vercel_project_name"),
+    vercelTeamId: text("vercel_team_id"),
+    vercelTeamSlug: text("vercel_team_slug"),
     // Whether this session uses a new auto-generated branch
     isNewBranch: boolean("is_new_branch").default(false).notNull(),
     // Unified sandbox state
@@ -224,6 +229,31 @@ export const chatReads = pgTable(
   ],
 );
 
+export const vercelProjectLinks = pgTable(
+  "vercel_project_links",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    repoOwner: text("repo_owner").notNull(),
+    repoName: text("repo_name").notNull(),
+    projectId: text("project_id").notNull(),
+    projectName: text("project_name").notNull(),
+    teamId: text("team_id"),
+    teamSlug: text("team_slug"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("vercel_project_links_user_repo_idx").on(
+      table.userId,
+      table.repoOwner,
+      table.repoName,
+    ),
+  ],
+);
+
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type Chat = typeof chats.$inferSelect;
@@ -236,6 +266,8 @@ export type ChatRead = typeof chatReads.$inferSelect;
 export type NewChatRead = typeof chatReads.$inferInsert;
 export type GitHubInstallation = typeof githubInstallations.$inferSelect;
 export type NewGitHubInstallation = typeof githubInstallations.$inferInsert;
+export type VercelProjectLink = typeof vercelProjectLinks.$inferSelect;
+export type NewVercelProjectLink = typeof vercelProjectLinks.$inferInsert;
 
 // Linked accounts for external platforms (Slack, Discord, etc.)
 export const linkedAccounts = pgTable(

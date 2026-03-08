@@ -6,13 +6,12 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SignedOutHero } from "@/components/auth/signed-out-hero";
 import { HomeSkeleton } from "@/components/home-skeleton";
-import type { SandboxType } from "@/components/sandbox-selector-compact";
 import { SessionDrawer } from "@/components/session-drawer";
 import { SessionStarter } from "@/components/session-starter";
 import { UserAvatarDropdown } from "@/components/user-avatar-dropdown";
 import { useCliTokens } from "@/hooks/use-cli-tokens";
 import { useSession } from "@/hooks/use-session";
-import { useSessions } from "@/hooks/use-sessions";
+import { useSessions, type CreateSessionInput } from "@/hooks/use-sessions";
 
 interface HomePageProps {
   hasSessionCookie: boolean;
@@ -32,24 +31,10 @@ export function HomePage({ hasSessionCookie, lastRepo }: HomePageProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const handleCreateSession = async (input: {
-    repoOwner?: string;
-    repoName?: string;
-    branch?: string;
-    cloneUrl?: string;
-    isNewBranch: boolean;
-    sandboxType: SandboxType;
-  }) => {
+  const handleCreateSession = async (input: CreateSessionInput) => {
     setIsCreating(true);
     try {
-      const { session: createdSession, chat } = await createSession({
-        repoOwner: input.repoOwner,
-        repoName: input.repoName,
-        branch: input.branch,
-        cloneUrl: input.cloneUrl,
-        isNewBranch: input.isNewBranch,
-        sandboxType: input.sandboxType,
-      });
+      const { session: createdSession, chat } = await createSession(input);
 
       router.push(`/sessions/${createdSession.id}/chats/${chat.id}`);
     } catch (error) {

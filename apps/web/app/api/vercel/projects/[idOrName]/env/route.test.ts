@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+mock.module("server-only", () => ({}));
+
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
 
 let session: { user?: { id: string } } | undefined;

@@ -11,6 +11,11 @@ import { getRepoToken } from "@/lib/github/get-repo-token";
 import { downloadAndExtractTarball } from "@/lib/github/tarball";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import {
+  createDotEnvLocalFileContent,
+  getProjectDevelopmentEnvironmentVariables,
+} from "@/lib/vercel/projects";
+import { getUserVercelToken } from "@/lib/vercel/token";
+import {
   DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
   DEFAULT_SANDBOX_PORTS,
   DEFAULT_SANDBOX_TIMEOUT_MS,
@@ -36,6 +41,47 @@ function toFileEntries(
     entries[path] = { type: "file", content };
   }
   return entries;
+}
+
+async function syncLinkedVercelEnvFile(params: {
+  userId: string;
+  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  sessionRecord: Awaited<ReturnType<typeof getSessionById>> | undefined;
+}): Promise<void> {
+  const { userId, sandbox, sessionRecord } = params;
+
+  if (!sessionRecord?.vercelProjectId) {
+    return;
+  }
+
+  const token = await getUserVercelToken(userId);
+  if (!token) {
+    console.error(
+      `Failed to sync Vercel env file for session ${sessionRecord.id}: Vercel token unavailable`,
+    );
+    return;
+  }
+
+  try {
+    const envVars = await getProjectDevelopmentEnvironmentVariables(token, {
+      projectId: sessionRecord.vercelProjectId,
+      projectName:
+        sessionRecord.vercelProjectName ?? sessionRecord.vercelProjectId,
+      teamId: sessionRecord.vercelTeamId,
+      teamSlug: sessionRecord.vercelTeamSlug,
+    });
+
+    await sandbox.writeFile(
+      `${sandbox.workingDirectory}/.env.local`,
+      createDotEnvLocalFileContent(envVars),
+      "utf-8",
+    );
+  } catch (error) {
+    console.error(
+      `Failed to sync Vercel env file for session ${sessionRecord.id}:`,
+      error,
+    );
+  }
 }
 
 interface CreateSandboxRequest {
@@ -275,6 +321,14 @@ export async function POST(req: Request) {
             }
           : undefined,
       },
+    });
+  }
+
+  if (sessionId) {
+    await syncLinkedVercelEnvFile({
+      userId: session.user.id,
+      sandbox,
+      sessionRecord,
     });
   }
 

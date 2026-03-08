@@ -1,38 +1,59 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "@/lib/session/get-server-session";
+import {
+  fetchVercelProjectEnvironmentResponse,
+  type VercelProjectReference,
+} from "@/lib/vercel/projects";
 import { getUserVercelToken } from "@/lib/vercel/token";
 
-const VERCEL_PROJECT_ENV_URL = "https://api.vercel.com/v10/projects";
 const FORWARDED_QUERY_PARAMS = [
   "gitBranch",
-  "decrypt",
   "source",
   "customEnvironmentId",
   "customEnvironmentSlug",
-  "teamId",
-  "slug",
 ] as const;
 
 export const dynamic = "force-dynamic";
 
-function getUpstreamUrl(req: Request, idOrName: string): URL {
+function buildProjectEnvironmentQuery(req: Request) {
   const requestUrl = new URL(req.url);
-  const upstreamUrl = new URL(
-    `${VERCEL_PROJECT_ENV_URL}/${encodeURIComponent(idOrName)}/env`,
-  );
+  const query: {
+    gitBranch?: string;
+    decrypt?: boolean;
+    source?: string;
+    customEnvironmentId?: string;
+    customEnvironmentSlug?: string;
+  } = {};
 
   for (const key of FORWARDED_QUERY_PARAMS) {
     const value = requestUrl.searchParams.get(key);
-    if (!value) continue;
-
-    if (key === "decrypt" && value !== "true" && value !== "false") {
-      continue;
+    if (value) {
+      query[key] = value;
     }
-
-    upstreamUrl.searchParams.set(key, value);
   }
 
-  return upstreamUrl;
+  const decrypt = requestUrl.searchParams.get("decrypt");
+  if (decrypt === "true") {
+    query.decrypt = true;
+  } else if (decrypt === "false") {
+    query.decrypt = false;
+  }
+
+  return query;
+}
+
+function buildProjectReference(
+  req: Request,
+  idOrName: string,
+): VercelProjectReference {
+  const requestUrl = new URL(req.url);
+
+  return {
+    projectId: idOrName,
+    projectName: idOrName,
+    teamId: requestUrl.searchParams.get("teamId"),
+    teamSlug: requestUrl.searchParams.get("slug"),
+  };
 }
 
 export async function GET(
@@ -64,13 +85,11 @@ export async function GET(
   }
 
   try {
-    const upstreamResponse = await fetch(getUpstreamUrl(req, idOrName), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      cache: "no-store",
-      signal: req.signal,
-    });
+    const upstreamResponse = await fetchVercelProjectEnvironmentResponse(
+      token,
+      buildProjectReference(req, idOrName),
+      buildProjectEnvironmentQuery(req),
+    );
 
     const body = await upstreamResponse.text();
     const headers = new Headers();

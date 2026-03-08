@@ -4,6 +4,7 @@ import {
   createSessionWithInitialChat,
   getUsedSessionTitles,
 } from "@/lib/db/sessions";
+import { getVercelProjectLinkForRepo } from "@/lib/db/vercel-project-links";
 import { getUserPreferences } from "@/lib/db/user-preferences";
 import { getRepoToken } from "@/lib/github/get-repo-token";
 import { getRandomCityName } from "@/lib/random-city";
@@ -85,6 +86,11 @@ export default async function RepoPage({ params }: RepoPageProps) {
 
   const usedNames = await getUsedSessionTitles(session.user.id);
   const title = getRandomCityName(usedNames);
+  const savedVercelProject = await getVercelProjectLinkForRepo(
+    session.user.id,
+    username,
+    repo,
+  );
 
   const result = await createSessionWithInitialChat({
     session: {
@@ -97,6 +103,10 @@ export default async function RepoPage({ params }: RepoPageProps) {
       branch: repoInfo.default_branch,
       cloneUrl,
       isNewBranch: false,
+      vercelProjectId: savedVercelProject?.projectId,
+      vercelProjectName: savedVercelProject?.projectName,
+      vercelTeamId: savedVercelProject?.teamId ?? null,
+      vercelTeamSlug: savedVercelProject?.teamSlug ?? null,
       sandboxState: { type: preferences.defaultSandboxType },
       lifecycleState: "provisioning",
       lifecycleVersion: 0,

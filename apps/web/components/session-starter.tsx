@@ -1,31 +1,46 @@
 "use client";
 
-import { GitBranch, Plus, X } from "lucide-react";
+import { GitBranch, Loader2, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import useSWR from "swr";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useSession } from "@/hooks/use-session";
+import type { CreateSessionInput } from "@/hooks/use-sessions";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
+import { fetcher } from "@/lib/swr";
+import type {
+  RepoVercelProjectsResponse,
+  VercelProjectCandidate,
+} from "@/lib/vercel/types";
 import { cn } from "@/lib/utils";
 import { BranchSelectorCompact } from "./branch-selector-compact";
 import { RepoSelectorCompact } from "./repo-selector-compact";
 import {
   DEFAULT_SANDBOX_TYPE,
   SANDBOX_OPTIONS,
-  type SandboxType,
 } from "./sandbox-selector-compact";
+
+const NO_VERCEL_PROJECT_VALUE = "__none__";
 
 type SessionMode = "empty" | "repo";
 
 interface SessionStarterProps {
-  onSubmit: (session: {
-    repoOwner?: string;
-    repoName?: string;
-    branch?: string;
-    cloneUrl?: string;
-    isNewBranch: boolean;
-    sandboxType: SandboxType;
-  }) => void;
+  onSubmit: (session: CreateSessionInput) => void;
   isLoading?: boolean;
   lastRepo: { owner: string; repo: string } | null;
+}
+
+function getVercelProjectLabel(project: VercelProjectCandidate): string {
+  return project.teamName
+    ? `${project.projectName} · ${project.teamName}`
+    : project.projectName;
 }
 
 export function SessionStarter({
@@ -42,18 +57,63 @@ export function SessionStarter({
   const [selectedRepo, setSelectedRepo] = useState(() => lastRepo?.repo ?? "");
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [isNewBranch, setIsNewBranch] = useState(!!lastRepo);
+  const [selectedVercelProjectId, setSelectedVercelProjectId] = useState(
+    NO_VERCEL_PROJECT_VALUE,
+  );
 
   const { preferences } = useUserPreferences();
+  const { session: currentSession, loading: sessionLoading } = useSession();
 
   const sandboxType = preferences?.defaultSandboxType ?? DEFAULT_SANDBOX_TYPE;
   const sandboxName =
-    SANDBOX_OPTIONS.find((s) => s.id === sandboxType)?.name ?? sandboxType;
+    SANDBOX_OPTIONS.find((option) => option.id === sandboxType)?.name ??
+    sandboxType;
+
+  const repoSelectionKey =
+    mode === "repo" && selectedOwner && selectedRepo
+      ? `${selectedOwner}/${selectedRepo}`
+      : null;
+  const shouldLookupVercelProjects =
+    repoSelectionKey !== null && currentSession?.authProvider === "vercel";
+  const repoProjectsUrl = shouldLookupVercelProjects
+    ? `/api/vercel/repo-projects?repoOwner=${encodeURIComponent(selectedOwner)}&repoName=${encodeURIComponent(selectedRepo)}`
+    : null;
+
+  const {
+    data: repoProjectsData,
+    error: repoProjectsError,
+    isLoading: repoProjectsLoading,
+  } = useSWR<RepoVercelProjectsResponse>(repoProjectsUrl, fetcher);
+
+  const repoProjects = repoProjectsData?.projects ?? [];
+  const selectedVercelProject = repoProjects.find(
+    (project) => project.projectId === selectedVercelProjectId,
+  );
+
+  useEffect(() => {
+    setSelectedVercelProjectId(NO_VERCEL_PROJECT_VALUE);
+  }, [repoSelectionKey]);
+
+  useEffect(() => {
+    if (!repoSelectionKey || !shouldLookupVercelProjects) {
+      return;
+    }
+
+    const nextSelectedProjectId =
+      repoProjectsData?.selectedProjectId ?? NO_VERCEL_PROJECT_VALUE;
+    setSelectedVercelProjectId(nextSelectedProjectId);
+  }, [
+    repoSelectionKey,
+    repoProjectsData?.selectedProjectId,
+    shouldLookupVercelProjects,
+  ]);
 
   const handleRepoSelect = (owner: string, repo: string) => {
     setSelectedOwner(owner);
     setSelectedRepo(repo);
     setSelectedBranch(null);
     setIsNewBranch(false);
+    setSelectedVercelProjectId(NO_VERCEL_PROJECT_VALUE);
   };
 
   const handleRepoClear = () => {
@@ -61,6 +121,7 @@ export function SessionStarter({
     setSelectedRepo("");
     setSelectedBranch(null);
     setIsNewBranch(false);
+    setSelectedVercelProjectId(NO_VERCEL_PROJECT_VALUE);
   };
 
   const handleBranchChange = (branch: string | null, newBranch: boolean) => {
@@ -77,7 +138,13 @@ export function SessionStarter({
 
   const isRepoSelectionComplete =
     mode !== "repo" || (selectedOwner && selectedRepo);
-  const isSubmitDisabled = isLoading || !isRepoSelectionComplete;
+  const isProjectLookupPending =
+    shouldLookupVercelProjects && repoProjectsLoading && !repoProjectsData;
+  const isSubmitDisabled =
+    isLoading ||
+    !isRepoSelectionComplete ||
+    (mode === "repo" && sessionLoading) ||
+    isProjectLookupPending;
 
   const handleSubmit = () => {
     if (isSubmitDisabled) return;
@@ -92,6 +159,17 @@ export function SessionStarter({
           : undefined,
       isNewBranch: mode === "repo" ? isNewBranch : false,
       sandboxType,
+      vercelProject:
+        mode === "repo" && currentSession?.authProvider === "vercel"
+          ? selectedVercelProject
+            ? {
+                projectId: selectedVercelProject.projectId,
+                projectName: selectedVercelProject.projectName,
+                teamId: selectedVercelProject.teamId ?? null,
+                teamSlug: selectedVercelProject.teamSlug ?? null,
+              }
+            : null
+          : undefined,
     });
   };
 
@@ -108,7 +186,6 @@ export function SessionStarter({
       )}
     >
       <div className="flex flex-col gap-4">
-        {/* Segmented toggle */}
         <div className="flex rounded-lg bg-muted/70 p-1 dark:bg-white/[0.04]">
           <button
             type="button"
@@ -138,7 +215,6 @@ export function SessionStarter({
           </button>
         </div>
 
-        {/* Repo mode: show repo/branch pickers */}
         {mode === "repo" && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
@@ -169,10 +245,80 @@ export function SessionStarter({
                 onChange={handleBranchChange}
               />
             )}
+
+            {selectedOwner &&
+              selectedRepo &&
+              currentSession?.authProvider === "vercel" && (
+                <div className="rounded-md border border-input bg-background/60 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Vercel project
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      If selected, Development environment variables from this
+                      project will be written to <code>.env.local</code> when
+                      the sandbox is first created.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {isProjectLookupPending ? (
+                      <div className="flex h-9 items-center gap-2 rounded-md border border-dashed border-input px-3 text-sm text-muted-foreground dark:border-white/10">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Finding matching Vercel projects...
+                      </div>
+                    ) : repoProjects.length > 0 ? (
+                      <Select
+                        value={selectedVercelProjectId}
+                        onValueChange={setSelectedVercelProjectId}
+                      >
+                        <SelectTrigger className="w-full bg-background/80 dark:bg-white/[0.03]">
+                          <SelectValue placeholder="Choose a Vercel project" />
+                        </SelectTrigger>
+                        <SelectContent align="start" position="popper">
+                          <SelectItem value={NO_VERCEL_PROJECT_VALUE}>
+                            Don&apos;t sync `.env.local`
+                          </SelectItem>
+                          {repoProjects.map((project) => (
+                            <SelectItem
+                              key={project.projectId}
+                              value={project.projectId}
+                            >
+                              {getVercelProjectLabel(project)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="rounded-md border border-dashed border-input px-3 py-2 text-sm text-muted-foreground dark:border-white/10">
+                        No matching Vercel project was found for this
+                        repository. You can still start the session without
+                        syncing
+                        <code>.env.local</code>.
+                      </div>
+                    )}
+
+                    {repoProjectsError ? (
+                      <p className="text-xs text-destructive">
+                        Couldn&apos;t load Vercel projects:{" "}
+                        {repoProjectsError.message}
+                      </p>
+                    ) : selectedVercelProject?.isSavedDefault ? (
+                      <p className="text-xs text-muted-foreground">
+                        Using your remembered Vercel project for this
+                        repository.
+                      </p>
+                    ) : repoProjects.length === 1 && selectedVercelProject ? (
+                      <p className="text-xs text-muted-foreground">
+                        Auto-selected the only matching Vercel project.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              )}
           </div>
         )}
 
-        {/* Empty mode: brief description */}
         {mode === "empty" && (
           <p className="text-center text-sm text-muted-foreground dark:text-neutral-500">
             Start with a blank sandbox -- no repository required.
