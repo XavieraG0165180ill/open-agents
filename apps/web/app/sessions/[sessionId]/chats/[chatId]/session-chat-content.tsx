@@ -1300,7 +1300,8 @@ export function SessionChatContent({
       }
 
       const hasPendingGitWork =
-        statusSnapshot.hasUncommittedChanges || statusSnapshot.hasUnpushedCommits;
+        statusSnapshot.hasUncommittedChanges ||
+        statusSnapshot.hasUnpushedCommits;
 
       if (!hasPendingGitWork) {
         return { status: "nothing-to-commit" };
