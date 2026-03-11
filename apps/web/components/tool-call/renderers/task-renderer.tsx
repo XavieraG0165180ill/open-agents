@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import type { TaskPendingToolCall } from "@open-harness/agent";
 import { formatTokens, toRelativePath } from "@open-harness/shared";
 import { Loader2 } from "lucide-react";
@@ -37,14 +38,50 @@ function countToolCalls(messages: unknown): number {
   ).length;
 }
 
+function formatTime(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
+function useTaskTiming(isRunning: boolean, startedAtMs?: number) {
+  const fallbackStartRef = useRef<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isRunning) {
+      return;
+    }
+
+    if (startedAtMs == null && !fallbackStartRef.current) {
+      fallbackStartRef.current = Date.now();
+    }
+
+    setNow(Date.now());
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isRunning, startedAtMs]);
+
+  const effectiveStart = startedAtMs ?? fallbackStartRef.current;
+  if (!isRunning || effectiveStart == null) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((now - effectiveStart) / 1000));
+}
+
 function SubagentToolCall({
   toolCall,
   isRunning,
-  expanded = false,
 }: {
   toolCall: TaskPendingToolCall;
   isRunning: boolean;
-  expanded?: boolean;
 }) {
   const summary = getToolSummary(toolCall);
   const displayName =
@@ -69,23 +106,14 @@ function SubagentToolCall({
         {summary && (
           <>
             <span className="text-sm text-muted-foreground">(</span>
-            <span
-              className={cn(
-                "text-sm text-foreground",
-                expanded ? "" : "max-w-[200px] truncate",
-              )}
-            >
-              {summary}
-            </span>
+            <span className="text-sm text-foreground">{summary}</span>
             <span className="text-sm text-muted-foreground">)</span>
           </>
         )}
       </div>
-      {expanded && (
-        <pre className="ml-4 mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-foreground">
-          {JSON.stringify(toolCall.input, null, 2)}
-        </pre>
-      )}
+      <pre className="ml-4 mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-foreground">
+        {JSON.stringify(toolCall.input, null, 2)}
+      </pre>
     </div>
   );
 }
@@ -111,6 +139,7 @@ export function TaskRenderer({
   const pendingToolCall = output?.pending ?? null;
   const toolCount =
     output?.toolCallCount ?? (isComplete ? countToolCalls(output?.final) : 0);
+  const tokenCount = output?.usage?.inputTokens ?? null;
 
   const isTaskStreaming = hasOutput && isPreliminary;
   const isRunningState =
@@ -119,17 +148,9 @@ export function TaskRenderer({
     isTaskStreaming;
   const isActuallyRunning = isRunningState && !state.interrupted;
 
-  const dotColor = taskDenied
-    ? "bg-red-500"
-    : taskApprovalRequested
-      ? "bg-yellow-500"
-      : state.interrupted
-        ? "bg-yellow-500"
-        : isActuallyRunning
-          ? "bg-yellow-500"
-          : isComplete
-            ? "bg-green-500"
-            : "bg-yellow-500";
+  const startedAt =
+    typeof output?.startedAt === "number" ? output.startedAt : undefined;
+  const elapsedSeconds = useTaskTiming(isActuallyRunning, startedAt);
 
   const subagentLabel =
     subagentType === "explorer"
@@ -140,43 +161,93 @@ export function TaskRenderer({
           ? "General"
           : "Task";
 
-  const hasExpandableContent =
-    pendingToolCall !== null ||
-    (fullPrompt && fullPrompt.length > 80) ||
-    isComplete;
-
   const indicator = state.interrupted ? (
     <span className="inline-block h-2 w-2 rounded-full border border-yellow-500" />
   ) : state.running || isActuallyRunning ? (
     <Loader2 className="h-3 w-3 animate-spin text-yellow-500" />
   ) : (
-    <span className={cn("inline-block h-2 w-2 rounded-full", dotColor)} />
+    <span
+      className={cn(
+        "inline-block h-2 w-2 rounded-full",
+        taskDenied
+          ? "bg-red-500"
+          : taskApprovalRequested
+            ? "bg-yellow-500"
+            : isComplete
+              ? "bg-green-500"
+              : "bg-yellow-500",
+      )}
+    />
   );
 
-  const meta = pendingToolCall ? (
-    <span className="inline-flex max-w-[220px] items-center gap-1.5 overflow-hidden">
-      <span className={cn(isPreliminary && "text-yellow-500")}>
-        {pendingToolCall.name}
+  // Build accumulating meta for the right side
+  const metaParts: string[] = [];
+
+  if (toolCount > 0) {
+    metaParts.push(`${toolCount} tool${toolCount === 1 ? "" : "s"}`);
+  }
+
+  if (isActuallyRunning) {
+    if (elapsedSeconds > 0) {
+      metaParts.push(formatTime(elapsedSeconds));
+    }
+  } else if (isComplete && tokenCount !== null) {
+    metaParts.push(`${formatTokens(tokenCount)} tokens`);
+  }
+
+  const meta =
+    metaParts.length > 0 ? (
+      <span className="inline-flex items-center gap-1">
+        {metaParts.join(" · ")}
       </span>
-      {getToolSummary(pendingToolCall) && (
-        <span className="truncate text-muted-foreground">
-          {getToolSummary(pendingToolCall)}
-        </span>
-      )}
-    </span>
-  ) : isComplete ? (
-    <span className="inline-flex items-center gap-1.5">
-      <span>
-        {toolCount} tool{toolCount === 1 ? "" : "s"}
-      </span>
-      {output?.usage?.inputTokens ? (
-        <span>{formatTokens(output.usage.inputTokens)} tokens</span>
-      ) : null}
-    </span>
-  ) : undefined;
+    ) : undefined;
+
+  // Current activity status for expanded view
+  let currentActivity: string | null = null;
+  if (isActuallyRunning && pendingToolCall) {
+    const displayName =
+      pendingToolCall.name.charAt(0).toUpperCase() +
+      pendingToolCall.name.slice(1);
+    const summary = getToolSummary(pendingToolCall);
+    currentActivity = summary ? `${displayName} ${summary}` : displayName;
+  } else if (isActuallyRunning) {
+    currentActivity = "Initializing...";
+  } else if (state.interrupted) {
+    currentActivity = "Interrupted";
+  }
+
+  const hasExpandableContent =
+    pendingToolCall !== null ||
+    Boolean(fullPrompt) ||
+    isComplete ||
+    currentActivity !== null;
 
   const expandedContent = hasExpandableContent ? (
     <div className="space-y-3">
+      {/* Current activity when running */}
+      {currentActivity && (
+        <div>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">
+            Current activity
+          </div>
+          <div className="text-sm text-foreground">{currentActivity}</div>
+        </div>
+      )}
+
+      {/* Current tool call details when running */}
+      {pendingToolCall && (
+        <div>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">
+            Current tool call
+          </div>
+          <SubagentToolCall
+            toolCall={pendingToolCall}
+            isRunning={isPreliminary}
+          />
+        </div>
+      )}
+
+      {/* Task prompt */}
       {fullPrompt && (
         <div>
           <div className="mb-1 text-xs font-medium text-muted-foreground">
@@ -188,31 +259,22 @@ export function TaskRenderer({
         </div>
       )}
 
+      {/* Subagent type */}
       {subagentType && (
         <div>
-          <span className="text-xs text-muted-foreground">Subagent type: </span>
+          <span className="text-xs text-muted-foreground">
+            Subagent type:{" "}
+          </span>
           <span className="text-sm text-foreground">{subagentType}</span>
         </div>
       )}
 
-      {pendingToolCall && (
-        <div>
-          <div className="mb-1 text-xs font-medium text-muted-foreground">
-            Current tool call
-          </div>
-          <SubagentToolCall
-            toolCall={pendingToolCall}
-            isRunning={isPreliminary}
-            expanded
-          />
-        </div>
-      )}
-
+      {/* Completion stats */}
       {isComplete && (
         <div className="text-sm text-muted-foreground">
-          Complete ({toolCount} tool calls
-          {output?.usage?.inputTokens
-            ? `, ${formatTokens(output.usage.inputTokens)} tokens`
+          Complete ({toolCount} tool call{toolCount === 1 ? "" : "s"}
+          {tokenCount !== null
+            ? `, ${formatTokens(tokenCount)} tokens`
             : ""}
           )
         </div>
