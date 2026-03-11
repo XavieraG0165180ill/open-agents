@@ -477,10 +477,7 @@ function ActivityStatusBar({
         />
         <span>{label}</span>
         {details.map((detail) => (
-          <span
-            key={detail.label}
-            className="inline-flex items-center gap-2"
-          >
+          <span key={detail.label} className="inline-flex items-center gap-2">
             <span className="text-muted-foreground/30">·</span>
             <span className={detail.className}>{detail.label}</span>
           </span>
@@ -1140,7 +1137,6 @@ export function SessionChatContent({
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [showDiffPanel, setShowDiffPanel] = useState(false);
-  const [hideToolDetails, setHideToolDetails] = useState(false);
   const [mobileArchiveDialogOpen, setMobileArchiveDialogOpen] = useState(false);
   const [mobileShareOpen, setMobileShareOpen] = useState(false);
   const [chatSwitcherOpen, setChatSwitcherOpen] = useState(false);
@@ -1277,6 +1273,7 @@ export function SessionChatContent({
     unarchiveSession,
     updateChatModel,
     updateSessionTitle,
+    updateSessionHideToolDetails,
     hadInitialMessages,
     diff,
     refreshDiff,
@@ -1303,6 +1300,7 @@ export function SessionChatContent({
     modelOptions,
     modelOptionsLoading,
   } = useSessionChatContext();
+  const hideToolDetails = session.hideToolDetails;
   const {
     messages,
     error,
@@ -2892,7 +2890,14 @@ export function SessionChatContent({
                   <DropdownMenuCheckboxItem
                     checked={hideToolDetails}
                     onCheckedChange={(checked) => {
-                      setHideToolDetails(checked === true);
+                      void updateSessionHideToolDetails(checked === true).catch(
+                        (error: unknown) => {
+                          console.error(
+                            "Failed to update hide tool details preference:",
+                            error,
+                          );
+                        },
+                      );
                     }}
                   >
                     Hide tool details

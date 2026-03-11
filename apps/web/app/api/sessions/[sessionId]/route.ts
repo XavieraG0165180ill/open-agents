@@ -19,6 +19,7 @@ interface UpdateSessionRequest {
   linesRemoved?: number;
   prNumber?: number;
   prStatus?: "open" | "merged" | "closed";
+  hideToolDetails?: boolean;
 }
 
 export async function GET(

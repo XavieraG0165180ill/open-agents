@@ -155,6 +155,8 @@ export const sessions = pgTable(
     // Cached diff for offline viewing
     cachedDiff: jsonb("cached_diff"),
     cachedDiffUpdatedAt: timestamp("cached_diff_updated_at"),
+    // Session-specific chat UI preferences
+    hideToolDetails: boolean("hide_tool_details").default(false).notNull(),
     // Timestamps
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),

@@ -145,6 +145,7 @@ type SessionChatContextValue = {
   archiveSession: () => Promise<void>;
   unarchiveSession: () => Promise<void>;
   updateSessionTitle: (title: string) => Promise<void>;
+  updateSessionHideToolDetails: (hideToolDetails: boolean) => Promise<void>;
   updateChatModel: (modelId: string) => Promise<void>;
   /** Whether the chat had persisted messages when it was loaded */
   hadInitialMessages: boolean;
@@ -1107,6 +1108,34 @@ export function SessionChatProvider({
     [sessionRecord, mutate],
   );
 
+  const updateSessionHideToolDetails = useCallback(
+    async (hideToolDetails: boolean) => {
+      const previousSession = sessionRecord;
+      const optimisticSession: Session = {
+        ...sessionRecord,
+        hideToolDetails,
+      };
+
+      setSessionRecord(optimisticSession);
+
+      const res = await fetch(`/api/sessions/${sessionRecord.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hideToolDetails }),
+      });
+
+      const data = (await res.json()) as { session?: Session; error?: string };
+
+      if (!res.ok) {
+        setSessionRecord(previousSession);
+        throw new Error(data.error ?? "Failed to update session preference");
+      }
+
+      setSessionRecord(data.session ?? optimisticSession);
+    },
+    [sessionRecord],
+  );
+
   const updateChatModel = useCallback(
     async (modelId: string) => {
       const res = await fetch(
@@ -1142,6 +1171,7 @@ export function SessionChatProvider({
       archiveSession,
       unarchiveSession,
       updateSessionTitle,
+      updateSessionHideToolDetails,
       updateChatModel,
       hadInitialMessages,
       initialMessages,
@@ -1195,6 +1225,7 @@ export function SessionChatProvider({
       archiveSession,
       unarchiveSession,
       updateSessionTitle,
+      updateSessionHideToolDetails,
       updateChatModel,
       hadInitialMessages,
       initialMessages,

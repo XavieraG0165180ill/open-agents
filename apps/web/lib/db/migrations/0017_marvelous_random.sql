@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "hide_tool_details" boolean DEFAULT false NOT NULL;
