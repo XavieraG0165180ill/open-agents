@@ -1,8 +1,12 @@
+import { getRun } from "workflow/api";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionChat,
 } from "@/app/api/sessions/_lib/session-context";
-import { deleteChatMessageAndFollowing } from "@/lib/db/sessions";
+import {
+  deleteChatMessageAndFollowing,
+  updateChatActiveStreamId,
+} from "@/lib/db/sessions";
 
 type RouteContext = {
   params: Promise<{ sessionId: string; chatId: string; messageId: string }>;
@@ -28,10 +32,24 @@ export async function DELETE(_req: Request, context: RouteContext) {
   const { chat } = chatContext;
 
   if (chat.activeStreamId) {
-    return Response.json(
-      { error: "Cannot delete messages while a response is streaming" },
-      { status: 409 },
-    );
+    // Check if the workflow is actually still running. If it terminated
+    // without cleaning up (e.g. due to a failure), clear the stale ID
+    // and allow the delete to proceed.
+    try {
+      const run = getRun(chat.activeStreamId);
+      const status = await run.status;
+      if (status === "running" || status === "pending") {
+        return Response.json(
+          { error: "Cannot delete messages while a response is streaming" },
+          { status: 409 },
+        );
+      }
+    } catch {
+      // Workflow run not found — treat as stale.
+    }
+
+    // Workflow is terminal or not found — clear the stale activeStreamId.
+    await updateChatActiveStreamId(chatId, null);
   }
 
   const result = await deleteChatMessageAndFollowing(chatId, messageId);

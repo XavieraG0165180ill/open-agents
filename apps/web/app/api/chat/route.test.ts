@@ -19,32 +19,16 @@ interface TestChatRecord {
   activeStreamId: string | null;
 }
 
-interface StreamResponseOptions {
-  onFinish: (params: {
-    responseMessage: {
-      id: string;
-      role: "assistant";
-      parts: unknown[];
-    };
-  }) => Promise<void>;
-}
-
-const autoCommitCalls: Array<Record<string, unknown>> = [];
-const backgroundTasks: Promise<void>[] = [];
-const fetchCalls: string[] = [];
-
 let sessionRecord: TestSessionRecord | null;
 let chatRecord: TestChatRecord | null;
 let currentAuthSession: { user: { id: string } } | null;
 let isSandboxActive = true;
-let shouldTriggerStopBeforeFinish = false;
-let stopCallback: (() => void) | null = null;
-let preferencesAutoCommitPush = true;
+let existingRunStatus: string = "completed";
+let compareAndSetResult = true;
 
 const originalFetch = globalThis.fetch;
 
-globalThis.fetch = (async (input: RequestInfo | URL) => {
-  fetchCalls.push(String(input));
+globalThis.fetch = (async (_input: RequestInfo | URL) => {
   return new Response("{}", {
     status: 200,
     headers: {
@@ -55,53 +39,53 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
 
 mock.module("next/server", () => ({
   after: (task: Promise<unknown>) => {
-    backgroundTasks.push(Promise.resolve(task).then(() => undefined));
+    void Promise.resolve(task);
   },
 }));
 
 mock.module("ai", () => ({
-  convertToModelMessages: async (messages: unknown) => messages,
+  createUIMessageStreamResponse: ({
+    stream,
+    headers,
+  }: {
+    stream: ReadableStream;
+    headers?: Record<string, string>;
+  }) => new Response(stream, { status: 200, headers }),
 }));
 
-mock.module("@/app/config", () => ({
-  webAgent: {
-    tools: {},
-    stream: async () => {
-      let resolveConsumeStream: (() => void) | null = null;
-
-      return {
-        consumeStream: () =>
-          new Promise<void>((resolve) => {
-            resolveConsumeStream = resolve;
-          }),
-        toUIMessageStreamResponse: async ({
-          onFinish,
-        }: StreamResponseOptions) => {
-          if (shouldTriggerStopBeforeFinish) {
-            stopCallback?.();
-          }
-
-          await onFinish({
-            responseMessage: {
-              id: "assistant-1",
-              role: "assistant",
-              parts: [],
-            },
-          });
-
-          resolveConsumeStream?.();
-          return new Response("ok", { status: 200 });
+mock.module("workflow/api", () => ({
+  start: async () => ({
+    runId: "wrun_test-123",
+    getReadable: () =>
+      new ReadableStream({
+        start(controller) {
+          controller.close();
         },
-      };
-    },
-  },
+      }),
+  }),
+  getRun: () => ({
+    status: Promise.resolve(existingRunStatus),
+    getReadable: () =>
+      new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+    cancel: () => Promise.resolve(),
+  }),
+}));
+
+mock.module("@/app/workflows/chat", () => ({
+  runAgentWorkflow: async () => {},
+}));
+
+mock.module("@/lib/chat/create-cancelable-readable-stream", () => ({
+  createCancelableReadableStream: (stream: ReadableStream) => stream,
 }));
 
 mock.module("@open-harness/agent", () => ({
-  collectTaskToolUsageEvents: () => [],
   discoverSkills: async () => [],
   gateway: () => "mock-model",
-  sumLanguageModelUsage: (_existing: unknown, usage: unknown) => usage,
 }));
 
 mock.module("@open-harness/sandbox", () => ({
@@ -117,7 +101,7 @@ mock.module("@open-harness/sandbox", () => ({
 }));
 
 mock.module("@/lib/db/sessions", () => ({
-  compareAndSetChatActiveStreamId: async () => true,
+  compareAndSetChatActiveStreamId: async () => compareAndSetResult,
   createChatMessageIfNotExists: async () => undefined,
   getChatById: async () => chatRecord,
   getSessionById: async () => sessionRecord,
@@ -131,21 +115,11 @@ mock.module("@/lib/db/sessions", () => ({
   upsertChatMessageScoped: async () => ({ status: "inserted" as const }),
 }));
 
-mock.module("@/lib/db/usage", () => ({
-  recordUsage: async () => {},
-}));
-
 mock.module("@/lib/db/user-preferences", () => ({
   getUserPreferences: async () => ({
-    autoCommitPush: preferencesAutoCommitPush,
+    autoCommitPush: true,
     modelVariants: [],
   }),
-}));
-
-mock.module("@/lib/chat-auto-commit", () => ({
-  runAutoCommitInBackground: async (params: Record<string, unknown>) => {
-    autoCommitCalls.push(params);
-  },
 }));
 
 mock.module("@/lib/github/get-repo-token", () => ({
@@ -159,12 +133,6 @@ mock.module("@/lib/skills-cache", () => ({
 
 mock.module("@/lib/github/user-token", () => ({
   getUserGitHubToken: async () => null,
-}));
-
-mock.module("@/lib/resumable-stream-context", () => ({
-  resumableStreamContext: {
-    createNewResumableStream: async () => {},
-  },
 }));
 
 mock.module("@/lib/sandbox/config", () => ({
@@ -181,15 +149,6 @@ mock.module("@/lib/sandbox/utils", () => ({
 
 mock.module("@/lib/session/get-server-session", () => ({
   getServerSession: async () => currentAuthSession,
-}));
-
-mock.module("@/lib/stop-signal", () => ({
-  onStopSignal: async (_chatId: string, callback: () => void) => {
-    stopCallback = callback;
-    return () => {
-      stopCallback = null;
-    };
-  },
 }));
 
 const routeModulePromise = import("./route");
@@ -227,18 +186,14 @@ function createValidRequest() {
 
 describe("/api/chat route", () => {
   beforeEach(() => {
-    autoCommitCalls.length = 0;
-    backgroundTasks.length = 0;
-    fetchCalls.length = 0;
-    shouldTriggerStopBeforeFinish = false;
-    stopCallback = null;
-    preferencesAutoCommitPush = true;
+    isSandboxActive = true;
+    existingRunStatus = "completed";
+    compareAndSetResult = true;
     currentAuthSession = {
       user: {
         id: "user-1",
       },
     };
-    isSandboxActive = true;
 
     sessionRecord = {
       id: "session-1",
@@ -260,73 +215,12 @@ describe("/api/chat route", () => {
     };
   });
 
-  test("runs auto commit after a natural finish", async () => {
+  test("starts a workflow and returns a streaming response", async () => {
     const { POST } = await routeModulePromise;
 
     const response = await POST(createValidRequest());
 
-    await Promise.all(backgroundTasks);
-
     expect(response.ok).toBe(true);
-    expect(autoCommitCalls).toHaveLength(1);
-    expect(autoCommitCalls[0]).toMatchObject({
-      sessionId: "session-1",
-      sessionTitle: "Session title",
-      repoOwner: "acme",
-      repoName: "repo",
-    });
-    expect(fetchCalls).toEqual([
-      "http://localhost/api/sessions/session-1/diff",
-    ]);
-  });
-
-  test("skips auto commit when the session override is disabled", async () => {
-    if (!sessionRecord) {
-      throw new Error("sessionRecord must be set");
-    }
-    sessionRecord.autoCommitPushOverride = false;
-    const { POST } = await routeModulePromise;
-
-    const response = await POST(createValidRequest());
-
-    await Promise.all(backgroundTasks);
-
-    expect(response.ok).toBe(true);
-    expect(autoCommitCalls).toHaveLength(0);
-    expect(fetchCalls).toEqual([
-      "http://localhost/api/sessions/session-1/diff",
-    ]);
-  });
-
-  test("uses session override even when user preference is disabled", async () => {
-    preferencesAutoCommitPush = false;
-    if (!sessionRecord) {
-      throw new Error("sessionRecord must be set");
-    }
-    sessionRecord.autoCommitPushOverride = true;
-    const { POST } = await routeModulePromise;
-
-    const response = await POST(createValidRequest());
-
-    await Promise.all(backgroundTasks);
-
-    expect(response.ok).toBe(true);
-    expect(autoCommitCalls).toHaveLength(1);
-  });
-
-  test("skips auto commit when the chat is stopped", async () => {
-    shouldTriggerStopBeforeFinish = true;
-    const { POST } = await routeModulePromise;
-
-    const response = await POST(createValidRequest());
-
-    await Promise.all(backgroundTasks);
-
-    expect(response.ok).toBe(true);
-    expect(autoCommitCalls).toHaveLength(0);
-    expect(fetchCalls).toEqual([
-      "http://localhost/api/sessions/session-1/diff",
-    ]);
   });
 
   test("returns 401 when not authenticated", async () => {
@@ -413,5 +307,54 @@ describe("/api/chat route", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Sandbox not initialized",
     });
+  });
+
+  test("reconnects to existing running workflow instead of starting new one", async () => {
+    if (!chatRecord) throw new Error("chatRecord must be set");
+    chatRecord.activeStreamId = "wrun_existing-456";
+    existingRunStatus = "running";
+
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(createValidRequest());
+
+    expect(response.ok).toBe(true);
+    // Should include the existing run ID header
+    expect(response.headers.get("x-workflow-run-id")).toBe("wrun_existing-456");
+  });
+
+  test("starts new workflow when existing run is completed", async () => {
+    if (!chatRecord) throw new Error("chatRecord must be set");
+    chatRecord.activeStreamId = "wrun_old-789";
+    existingRunStatus = "completed";
+
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(createValidRequest());
+
+    expect(response.ok).toBe(true);
+    // Should get the new run ID, not the old one
+    expect(response.headers.get("x-workflow-run-id")).toBe("wrun_test-123");
+  });
+
+  test("returns 409 when CAS race is lost", async () => {
+    compareAndSetResult = false;
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(createValidRequest());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Another workflow is already running for this chat",
+    });
+  });
+
+  test("includes x-workflow-run-id header on success", async () => {
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(createValidRequest());
+
+    expect(response.ok).toBe(true);
+    expect(response.headers.get("x-workflow-run-id")).toBe("wrun_test-123");
   });
 });

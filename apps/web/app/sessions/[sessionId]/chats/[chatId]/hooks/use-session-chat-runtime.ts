@@ -131,10 +131,17 @@ export function useSessionChatRuntime({
   const stopChatStream = useCallback(() => {
     userStoppedRef.current = true;
 
-    // Publish a server-side stop signal, then tear down local transport state.
+    // Send the current assistant message snapshot so the server can persist
+    // mid-step output before cancelling the workflow.
+    const lastMessage = chatInstance.messages[chatInstance.messages.length - 1];
+    const assistantMessage =
+      lastMessage?.role === "assistant" ? lastMessage : undefined;
+
     // We intentionally do not await this request so UI stop stays instant.
     void fetch(`/api/chat/${chatId}/stop`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(assistantMessage ? { assistantMessage } : {}),
     }).catch(() => {});
 
     void chatInstance.stop();

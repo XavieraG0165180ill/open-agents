@@ -55,11 +55,22 @@ mock.module("@/app/api/sessions/_lib/session-context", () => ({
   requireOwnedSessionChat: async () => ownedSessionChatResult,
 }));
 
+let mockWorkflowStatus = "running";
+
 mock.module("@/lib/db/sessions", () => ({
   deleteChatMessageAndFollowing: async (chatId: string, messageId: string) => {
     deleteCalls.push({ chatId, messageId });
     return deleteResult;
   },
+  updateChatActiveStreamId: async () => {},
+}));
+
+mock.module("workflow/api", () => ({
+  getRun: () => ({
+    get status() {
+      return Promise.resolve(mockWorkflowStatus);
+    },
+  }),
 }));
 
 const routeModulePromise = import("./route");
@@ -91,6 +102,7 @@ describe("/api/sessions/[sessionId]/chats/[chatId]/messages/[messageId]", () => 
       deletedMessageIds: ["message-2", "message-3"],
     };
     deleteCalls.length = 0;
+    mockWorkflowStatus = "running";
   });
 
   test("returns auth error from guard", async () => {

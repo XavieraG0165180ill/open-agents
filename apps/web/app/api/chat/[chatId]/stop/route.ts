@@ -1,18 +1,20 @@
+import { getRun } from "workflow/api";
 import {
   requireAuthenticatedUser,
   requireOwnedChatById,
 } from "@/app/api/chat/_lib/chat-context";
+import type { WebAgentUIMessage } from "@/app/types";
 import {
-  createRedisClient,
-  isRedisConfigured,
-  warnRedisDisabled,
-} from "@/lib/redis";
+  compareAndSetChatActiveStreamId,
+  createChatMessageIfNotExists,
+  updateChatAssistantActivity,
+} from "@/lib/db/sessions";
 
 type RouteContext = {
   params: Promise<{ chatId: string }>;
 };
 
-export async function POST(_request: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const authResult = await requireAuthenticatedUser();
   if (!authResult.ok) {
     return authResult.response;
@@ -28,33 +30,90 @@ export async function POST(_request: Request, context: RouteContext) {
     return chatContext.response;
   }
 
-  // Publish stop signal via Redis pub/sub
-  if (!isRedisConfigured()) {
-    warnRedisDisabled("Chat stop endpoint");
-    return Response.json(
-      {
-        error:
-          "Stop signaling is unavailable because REDIS_URL/KV_URL is not configured.",
-      },
-      { status: 503 },
-    );
+  const { chat } = chatContext;
+
+  if (!chat.activeStreamId) {
+    return Response.json({ success: true });
   }
 
-  const publisher = createRedisClient("stop-signal-publisher");
+  // Persist the latest client-side assistant message snapshot before
+  // cancelling so mid-step output is not lost on abrupt stop.
   try {
-    await publisher.publish(`stop:${chatId}`, "stop");
+    const body: unknown = await request.json().catch(() => null);
+    if (isStopRequestWithMessage(body)) {
+      await persistAssistantSnapshot(chatId, body.assistantMessage);
+    }
+  } catch {
+    // Best-effort — don't block cancellation if persistence fails.
+  }
+
+  try {
+    const run = getRun(chat.activeStreamId);
+    await run.cancel();
   } catch (error) {
     console.error(
-      `[redis] Failed to publish stop signal for chat ${chatId}:`,
+      `[workflow] Failed to cancel workflow run for chat ${chatId}:`,
       error,
     );
     return Response.json(
-      { error: "Failed to publish stop signal" },
-      { status: 502 },
+      { error: "Failed to cancel workflow run" },
+      { status: 500 },
     );
-  } finally {
-    publisher.disconnect();
   }
 
+  // Clear activeStreamId immediately so a follow-up prompt does not
+  // reconnect to the cancelled (but not yet terminal) workflow.
+  // Uses CAS to avoid clobbering a newer workflow that raced in.
+  await compareAndSetChatActiveStreamId(
+    chatId,
+    chat.activeStreamId,
+    null,
+  ).catch((err: unknown) => {
+    console.error(
+      `[workflow] Failed to clear activeStreamId for chat ${chatId}:`,
+      err,
+    );
+  });
+
   return Response.json({ success: true });
+}
+
+async function persistAssistantSnapshot(
+  chatId: string,
+  message: WebAgentUIMessage,
+): Promise<void> {
+  // Insert-only: if the workflow already persisted a fuller message, this
+  // is a no-op. Avoids overwriting server-side content with a stale
+  // (throttled) client snapshot.
+  const created = await createChatMessageIfNotExists({
+    id: message.id,
+    chatId,
+    role: "assistant",
+    parts: message,
+  });
+  if (created) {
+    await updateChatAssistantActivity(chatId, new Date());
+  }
+}
+
+function isStopRequestWithMessage(
+  value: unknown,
+): value is { assistantMessage: WebAgentUIMessage } {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if (!("assistantMessage" in value) || !value.assistantMessage) {
+    return false;
+  }
+  const msg = value.assistantMessage;
+  return (
+    typeof msg === "object" &&
+    msg !== null &&
+    "id" in msg &&
+    typeof msg.id === "string" &&
+    "role" in msg &&
+    msg.role === "assistant" &&
+    "parts" in msg &&
+    Array.isArray(msg.parts)
+  );
 }
