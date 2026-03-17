@@ -3,6 +3,7 @@
 import { isReasoningUIPart, isToolUIPart } from "ai";
 import { useMemo, useState, type ReactNode } from "react";
 import type { WebAgentUIMessage } from "@/app/types";
+import { hasRenderableAssistantPart } from "@/lib/chat-streaming-state";
 import { ToolCallsSummaryBar, type TodoInfo } from "./tool-calls-summary-bar";
 
 /**
@@ -77,6 +78,28 @@ function getLatestTodoInfo(message: WebAgentUIMessage): TodoInfo | null {
 }
 
 /**
+ * Determines if a non-streaming message was aborted — i.e. the response
+ * ended with tool calls rather than a concluding text part.
+ */
+function messageWasAborted(
+  message: WebAgentUIMessage,
+  isStreaming: boolean,
+): boolean {
+  if (isStreaming) return false;
+
+  // Find the last renderable part
+  for (let i = message.parts.length - 1; i >= 0; i--) {
+    const part = message.parts[i];
+    if (hasRenderableAssistantPart(part)) {
+      // If the last renderable part is NOT text, the response was cut short
+      return part.type !== "text";
+    }
+  }
+
+  return false;
+}
+
+/**
  * Checks whether a message has an active approval request, which
  * should force the tool calls to be expanded so the user can respond.
  */
@@ -131,6 +154,11 @@ export function AssistantMessageGroups({
     [message],
   );
 
+  const isAborted = useMemo(
+    () => messageWasAborted(message, isStreaming),
+    [message, isStreaming],
+  );
+
   // Force expand when there's an active approval the user needs to respond to
   const effectiveExpanded = isExpanded || hasActiveApproval;
 
@@ -151,6 +179,7 @@ export function AssistantMessageGroups({
         durationMs={durationMs}
         startedAt={startedAt}
         statusWordSeed={message.id}
+        isAborted={isAborted}
       />
       {children(effectiveExpanded)}
     </>

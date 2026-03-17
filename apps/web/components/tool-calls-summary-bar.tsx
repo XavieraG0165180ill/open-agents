@@ -70,6 +70,7 @@ export function ToolCallsSummaryBar({
   durationMs,
   startedAt,
   statusWordSeed,
+  isAborted = false,
 }: {
   isExpanded: boolean;
   onToggle: () => void;
@@ -85,6 +86,8 @@ export function ToolCallsSummaryBar({
   startedAt: string | null;
   /** Stable per-message seed used to choose a status word pair. */
   statusWordSeed: string | null;
+  /** Whether this message was aborted (stopped before completing). */
+  isAborted?: boolean;
 }) {
   // ---------------------------------------------------------------------------
   // Elapsed time logic
@@ -126,9 +129,11 @@ export function ToolCallsSummaryBar({
       : liveElapsed;
 
   const statusWordPair = getStatusWordPair(statusWordSeed);
-  const statusLabel = isStreaming
-    ? `${statusWordPair.present}…`
-    : statusWordPair.past;
+  const statusLabel = isAborted
+    ? "Aborted"
+    : isStreaming
+      ? `${statusWordPair.present}…`
+      : statusWordPair.past;
   const toolCallLabel =
     toolCallCount > 0
       ? `${toolCallCount} tool call${toolCallCount !== 1 ? "s" : ""}`

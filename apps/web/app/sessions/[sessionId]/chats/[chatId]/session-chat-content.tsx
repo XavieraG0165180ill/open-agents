@@ -2811,12 +2811,23 @@ export function SessionChatContent({
                             .slice(group.index + 1)
                             .some((messagePart) => messagePart.type === "text");
 
+                        // The final text part is the true last part of the
+                        // response only when no renderable parts follow it
+                        // (e.g. tool calls). If the request was aborted
+                        // mid-way, tool calls may appear after the last text,
+                        // meaning the text is NOT the conclusion — hide it.
+                        const isLastPartInMessage =
+                          isFinalAssistantTextPart &&
+                          !m.parts
+                            .slice(group.index + 1)
+                            .some(hasRenderableAssistantPart);
+
                         // When collapsed, only show the final text part once
-                        // streaming is complete (the finished response).
+                        // streaming is complete and it's truly the last part.
                         if (
                           !isToolCallsExpanded &&
                           m.role === "assistant" &&
-                          (!isFinalAssistantTextPart || isMessageStreaming)
+                          (!isLastPartInMessage || isMessageStreaming)
                         ) {
                           return null;
                         }
