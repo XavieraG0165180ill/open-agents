@@ -202,6 +202,7 @@ export async function PUT(req: Request) {
     const sandbox = await connectSandbox(
       { type: sandboxType, snapshotId: sessionRecord.snapshotUrl },
       {
+        name: sessionId,
         timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
         ports: DEFAULT_SANDBOX_PORTS,
       },

@@ -205,6 +205,7 @@ export async function POST(req: Request) {
     options: {
       env,
       gitUser,
+      ...(sessionId ? { name: sessionId } : {}),
       timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
       ports: DEFAULT_SANDBOX_PORTS,
       baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,

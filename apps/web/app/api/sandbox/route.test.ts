@@ -23,6 +23,7 @@ interface ConnectConfig {
     sandboxId?: string;
   };
   options?: {
+    name?: string;
     gitUser?: {
       email?: string;
     };
@@ -194,6 +195,7 @@ describe("/api/sandbox lifecycle kicks", () => {
       },
     ]);
     expect(updateCalls.length).toBeGreaterThan(0);
+    expect(connectConfigs[0]?.options?.name).toBe("session-1");
     expect(connectConfigs[0]?.options?.gitUser?.email).toBe(
       "12345+nico-gh@users.noreply.github.com",
     );

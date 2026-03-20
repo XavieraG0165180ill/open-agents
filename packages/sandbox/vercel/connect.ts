@@ -12,6 +12,7 @@ interface ConnectOptions {
   timeout?: number;
   ports?: number[];
   baseSnapshotId?: string;
+  name?: string;
 }
 
 function getRemainingTimeout(
@@ -76,6 +77,7 @@ export async function connectVercel(
   if (state.snapshotId) {
     const sdk = await VercelSandboxSDK.create({
       source: { type: "snapshot", snapshotId: state.snapshotId },
+      ...(options?.name && { name: options.name }),
       ...(options?.timeout !== undefined && { timeout: options.timeout }),
       ...(options?.ports && { ports: options.ports }),
     });
@@ -107,6 +109,7 @@ export async function connectVercel(
         token: state.source.token,
         newBranch: state.source.newBranch,
       },
+      ...(options?.name && { name: options.name }),
       env: options?.env,
       gitUser: options?.gitUser,
       hooks: options?.hooks,
@@ -120,6 +123,7 @@ export async function connectVercel(
 
   // Create empty sandbox
   return VercelSandbox.create({
+    ...(options?.name && { name: options.name }),
     env: options?.env,
     gitUser: options?.gitUser,
     hooks: options?.hooks,

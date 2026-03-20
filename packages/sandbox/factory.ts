@@ -28,6 +28,8 @@ export interface ConnectOptions {
   ports?: number[];
   /** Snapshot ID used as the base image for new sandboxes */
   baseSnapshotId?: string;
+  /** Optional persistent sandbox name to use on creation */
+  name?: string;
 }
 
 /**
