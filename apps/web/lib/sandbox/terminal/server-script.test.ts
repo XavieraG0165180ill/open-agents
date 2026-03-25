@@ -16,6 +16,7 @@ describe("TERMINAL_GATEWAY_SCRIPT", () => {
     expect(TERMINAL_GATEWAY_SCRIPT).toContain("GATEWAY_VERSION");
     expect(TERMINAL_GATEWAY_SCRIPT).toContain("attachedClients");
     expect(TERMINAL_GATEWAY_SCRIPT).toContain("ptyRunning");
+    expect(TERMINAL_GATEWAY_SCRIPT).toContain("hasSnapshot");
   });
 
   test("uses structured input messages and explicit session authorization", () => {
@@ -24,5 +25,12 @@ describe("TERMINAL_GATEWAY_SCRIPT", () => {
     expect(TERMINAL_GATEWAY_SCRIPT).toContain(
       "sessionId === expectedSessionId",
     );
+  });
+
+  test("supports persistent snapshots and multi-attach replay", () => {
+    expect(TERMINAL_GATEWAY_SCRIPT).toContain("screenSnapshot");
+    expect(TERMINAL_GATEWAY_SCRIPT).toContain('type: "snapshot"');
+    expect(TERMINAL_GATEWAY_SCRIPT).toContain("broadcastSnapshot(ws)");
+    expect(TERMINAL_GATEWAY_SCRIPT).toContain("clients.add(ws)");
   });
 });

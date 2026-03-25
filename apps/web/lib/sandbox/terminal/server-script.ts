@@ -1,4 +1,4 @@
-export const TERMINAL_GATEWAY_VERSION = "2026-03-25-gateway-v1";
+export const TERMINAL_GATEWAY_VERSION = "2026-03-25-gateway-v2";
 
 const TERMINAL_GATEWAY_CLIENT_SCRIPT = String.raw`
   import { FitAddon, Terminal, init } from "/dist/ghostty-web.js";
@@ -43,6 +43,11 @@ const TERMINAL_GATEWAY_CLIENT_SCRIPT = String.raw`
 
   let socket;
   let reconnectTimeoutId = null;
+  let hasSyncedSnapshot = false;
+
+  function setSnapshotPending() {
+    hasSyncedSnapshot = false;
+  }
 
   function clearReconnectTimeout() {
     if (reconnectTimeoutId !== null) {
@@ -78,7 +83,28 @@ const TERMINAL_GATEWAY_CLIENT_SCRIPT = String.raw`
     });
 
     socket.addEventListener("message", (event) => {
-      term.write(event.data);
+      let parsed;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        term.write(event.data);
+        return;
+      }
+
+      if (parsed.type === "snapshot" && typeof parsed.data === "string") {
+        term.reset();
+        term.write(parsed.data);
+        hasSyncedSnapshot = true;
+        return;
+      }
+
+      if (parsed.type === "output" && typeof parsed.data === "string") {
+        if (!hasSyncedSnapshot) {
+          return;
+        }
+        term.write(parsed.data);
+        return;
+      }
     });
 
     socket.addEventListener("error", () => {
@@ -87,6 +113,7 @@ const TERMINAL_GATEWAY_CLIENT_SCRIPT = String.raw`
 
     socket.addEventListener("close", () => {
       setStatus("Reconnecting…", "disconnected");
+      setSnapshotPending();
       scheduleReconnect();
     });
   }
@@ -316,11 +343,30 @@ const TERMINAL_GATEWAY_SCRIPT_LINES = [
   "const clients = new Set();",
   "let ptyProcess = null;",
   "let ptySize = { cols: 120, rows: 32 };",
+  'let screenSnapshot = "";',
+  "",
+  "function writeOutput(data) {",
+  "  screenSnapshot += data;",
+  "  const maxSnapshotLength = 200000;",
+  "  if (screenSnapshot.length > maxSnapshotLength) {",
+  "    screenSnapshot = screenSnapshot.slice(-maxSnapshotLength);",
+  "  }",
+  "  for (const client of clients) {",
+  "    if (client.readyState === client.OPEN) {",
+  '      client.send(JSON.stringify({ type: "output", data }));',
+  "    }",
+  "  }",
+  "}",
+  "",
+  "function broadcastSnapshot(client) {",
+  "  if (client.readyState !== client.OPEN) {",
+  "    return;",
+  "  }",
+  '  client.send(JSON.stringify({ type: "snapshot", data: screenSnapshot }));',
+  "}",
   "",
   "function ensurePty(cols, rows) {",
   "  if (ptyProcess) {",
-  "    ptyProcess.resize(cols, rows);",
-  "    ptySize = { cols, rows };",
   "    return ptyProcess;",
   "  }",
   "  ptyProcess = pty.spawn(getShell(), [], {",
@@ -335,24 +381,22 @@ const TERMINAL_GATEWAY_SCRIPT_LINES = [
   "    },",
   "  });",
   "  ptySize = { cols, rows };",
+  '  screenSnapshot = "";',
   "  ptyProcess.onData((data) => {",
-  "    for (const client of clients) {",
-  "      if (client.readyState === client.OPEN) {",
-  "        client.send(data);",
-  "      }",
-  "    }",
+  "    writeOutput(data);",
   "  });",
   "  ptyProcess.onExit(({ exitCode }) => {",
-  "    for (const client of clients) {",
-  "      if (client.readyState === client.OPEN) {",
-  '        client.send("\r\n\x1B[33mShell exited (code: " + (exitCode ?? 0) + ")\x1B[0m\r\n");',
-  "        client.close();",
-  "      }",
-  "    }",
-  "    clients.clear();",
+  '    writeOutput("\r\n\x1B[33mShell exited (code: " + (exitCode ?? 0) + ")\x1B[0m\r\n");',
   "    ptyProcess = null;",
   "  });",
   "  return ptyProcess;",
+  "}",
+  "",
+  "function resizePty(cols, rows) {",
+  "  ptySize = { cols, rows };",
+  "  if (ptyProcess) {",
+  "    ptyProcess.resize(cols, rows);",
+  "  }",
   "}",
   "",
   "const server = createServer((req, res) => {",
@@ -365,12 +409,16 @@ const TERMINAL_GATEWAY_SCRIPT_LINES = [
   "      sessionId: getGatewaySessionId() || null,",
   "      attachedClients: clients.size,",
   "      ptyRunning: ptyProcess !== null,",
+  "      hasSnapshot: screenSnapshot.length > 0,",
   "    });",
   "    return;",
   "  }",
   '  if (url.pathname === "/session") {',
   "    sendJson(res, 200, {",
   "      sessionId: getGatewaySessionId() || null,",
+  "      attachedClients: clients.size,",
+  "      ptyRunning: ptyProcess !== null,",
+  "      hasSnapshot: screenSnapshot.length > 0,",
   "    });",
   "    return;",
   "  }",
@@ -435,8 +483,10 @@ const TERMINAL_GATEWAY_SCRIPT_LINES = [
   '  const url = new URL(req.url ?? "/", "http://" + host);',
   '  const cols = clampSize(url.searchParams.get("cols"), ptySize.cols, 300);',
   '  const rows = clampSize(url.searchParams.get("rows"), ptySize.rows, 120);',
-  "  const activePty = ensurePty(cols, rows);",
+  "  ensurePty(cols, rows);",
+  "  resizePty(cols, rows);",
   "  clients.add(ws);",
+  "  broadcastSnapshot(ws);",
   '  ws.on("message", (rawMessage) => {',
   '    const message = rawMessage.toString("utf8");',
   "    try {",
@@ -444,16 +494,19 @@ const TERMINAL_GATEWAY_SCRIPT_LINES = [
   '      if (parsed.type === "resize") {',
   '        const nextCols = clampSize(String(parsed.cols ?? ""), ptySize.cols, 300);',
   '        const nextRows = clampSize(String(parsed.rows ?? ""), ptySize.rows, 120);',
-  "        activePty.resize(nextCols, nextRows);",
-  "        ptySize = { cols: nextCols, rows: nextRows };",
+  "        resizePty(nextCols, nextRows);",
   "        return;",
   "      }",
   '      if (parsed.type === "input" && typeof parsed.data === "string") {',
-  "        activePty.write(parsed.data);",
+  "        if (ptyProcess) {",
+  "          ptyProcess.write(parsed.data);",
+  "        }",
   "        return;",
   "      }",
   "    } catch {}",
-  "    activePty.write(message);",
+  "    if (ptyProcess) {",
+  "      ptyProcess.write(message);",
+  "    }",
   "  });",
   '  ws.on("close", () => {',
   "    clients.delete(ws);",

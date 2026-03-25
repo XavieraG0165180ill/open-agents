@@ -47,7 +47,7 @@ let healthcheckResults: Array<{
 }> = [];
 let sandboxDomain: string | null = "https://terminal.vercel.run";
 let installShouldFail = false;
-const CURRENT_TERMINAL_GATEWAY_VERSION = "2026-03-25-gateway-v1";
+const CURRENT_TERMINAL_GATEWAY_VERSION = "2026-03-25-gateway-v2";
 const connectCalls: Array<{ state: unknown; options: unknown }> = [];
 const mkdirCalls: Array<{ path: string; options?: { recursive?: boolean } }> =
   [];
