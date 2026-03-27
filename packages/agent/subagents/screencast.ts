@@ -136,7 +136,7 @@ const callOptionsSchema = z.object({
 export type ScreencastCallOptions = z.infer<typeof callOptionsSchema>;
 
 export const screencastSubagent = new ToolLoopAgent({
-  model: gateway("anthropic/claude-opus-4"),
+  model: gateway("anthropic/claude-opus-4.6"),
   instructions: SCREENCAST_SYSTEM_PROMPT,
   tools: {
     bash: bashTool(),
