@@ -1,110 +1,90 @@
-Summary: Migrate the sandbox stack from v1 ephemeral sandbox IDs plus snapshot-driven restores to v2 persistent named sandboxes. New sandboxes should use the deterministic name `session_${sessionId}`, persist that value in `sandboxState.sandboxId`, and keep it stable for the life of the session while using `stop()` (not `snapshot()`) for normal hibernation.
+Summary: Clean up the web-layer sandbox model so persistent sandboxes and legacy snapshots are handled through one explicit interpretation instead of mixed heuristics. Keep the current DB columns for now, but confine legacy translation to one boundary/helper layer and update lifecycle, APIs, and UI to consume explicit resume/runtime state.
 
 Context: Key findings from exploration -- existing patterns, relevant files, constraints
 
-- The sandbox package is still on `@vercel/sandbox@^1.3.0` and the provider layer is built around ephemeral `sandboxId` reconnects and `snapshotId` restores.
-  - `packages/sandbox/package.json`
-  - `packages/sandbox/vercel/state.ts`
-  - `packages/sandbox/vercel/connect.ts`
-  - `packages/sandbox/vercel/sandbox.ts`
-- Current state persistence stores runtime identity in `sandboxState.sandboxId` and clears it on stop/hibernate/archive. Hibernation is implemented by taking a snapshot, storing `snapshotUrl`, and replacing runtime state with `{ type: "vercel" }`.
+- The provider layer is mostly in the right place already: `packages/sandbox/vercel/sandbox.ts`, `packages/sandbox/vercel/connect.ts`, and `packages/sandbox/vercel/state.ts` already support persistent named sandboxes and explicit resume behavior.
+- The remaining complexity is in the web app, where raw persisted fields are interpreted in multiple ways:
+  - `sandboxState.sandboxId` can mean active runtime identity, paused persistent sandbox, or a migration placeholder.
+  - `snapshotUrl` now stores a snapshot ID, but its name still suggests URL semantics.
+- Those mixed semantics currently leak across routes, lifecycle logic, and UI:
+  - `apps/web/lib/sandbox/utils.ts`
   - `apps/web/lib/sandbox/lifecycle.ts`
   - `apps/web/lib/sandbox/archive-session.ts`
-  - `apps/web/lib/sandbox/utils.ts`
-  - `apps/web/app/api/sandbox/snapshot/route.ts`
-- Many API routes treat “sandbox is usable” as “`sandboxState.sandboxId` is present”, and on unavailability they clear the sandbox state completely. That assumption breaks with persistent named sandboxes because the stable sandbox identity should remain even after `stop()`.
+  - `apps/web/app/api/sandbox/route.ts`
   - `apps/web/app/api/sandbox/reconnect/route.ts`
   - `apps/web/app/api/sandbox/status/route.ts`
+  - `apps/web/app/api/sandbox/snapshot/route.ts`
+  - `apps/web/app/api/sessions/[sessionId]/route.ts`
+  - `apps/web/app/api/sessions/[sessionId]/diff/route.ts`
   - `apps/web/app/api/sessions/[sessionId]/files/route.ts`
   - `apps/web/app/api/sessions/[sessionId]/files/content/route.ts`
   - `apps/web/app/api/sessions/[sessionId]/skills/route.ts`
-  - `apps/web/app/api/sessions/[sessionId]/diff/route.ts`
-- The DB schema already has a flexible `sandboxState` JSON column plus legacy snapshot fields. We can likely avoid a SQL migration if we keep using `sandboxState.sandboxId` as the persisted identifier and reserve `snapshotUrl` for legacy migration / optional backup only.
-  - `apps/web/lib/db/schema.ts`
-  - `apps/web/lib/db/sessions.ts`
-- There is a high-risk direct REST optimization path that uses internal `@vercel/sandbox/dist/*` APIs and passes `sandboxId` everywhere. Since we are comfortable dropping it, the migration should explicitly remove/bypass this path and standardize on the documented SDK methods only.
-  - `packages/sandbox/vercel/direct.ts`
-  - `packages/sandbox/vercel/direct-operations.ts`
+  - `apps/web/app/sessions/[sessionId]/chats/[chatId]/session-chat-context.tsx`
+  - `apps/web/app/sessions/[sessionId]/chats/[chatId]/session-chat-content.tsx`
+- `apps/web/lib/db/sessions.ts` is already the right place to normalize old stored records (`hybrid -> vercel`), so it is the natural boundary for the next round of cleanup too.
+- To keep this pass scoped, we should avoid a SQL migration right now. The physical rename from `snapshotUrl` to `snapshotId` can come after behavior is simplified.
 
 Approach: High-level design decision and why
 
-- Use `session_${sessionId}` (underscore, not colon) as the canonical sandbox name.
-- Keep the existing `sandboxState.sandboxId` field name for compatibility, but change its meaning from “ephemeral VM id” to “persistent sandbox name”.
-- Split two concepts that are currently conflated:
-  1. persistent sandbox identity (the named sandbox, stable across stops)
-  2. active session/runtime availability (whether a VM session is currently running)
-- For new v2 sandboxes:
-  - create once with `name: session_${sessionId}`
-  - persist that name in `sandboxState.sandboxId`
-  - on inactivity/archive/manual pause, call `stop()` and keep the stable sandbox identity in DB
-  - on resume, re-open by name and resume the stopped sandbox instead of creating a new sandbox from a snapshot
-- For legacy v1 sandboxes already in the database:
-  - if already archived/hibernated with `snapshotUrl`, resume into a new named sandbox `session_${sessionId}` on first restore
-  - if currently active with an old ephemeral/backfilled id, keep working until the next pause/archive; at that point snapshot the legacy sandbox, persist the deterministic name, and restore into the new named sandbox on next resume
-  - after successful migration from a legacy sandbox to the deterministic named sandbox, delete the obsolete legacy sandbox to avoid orphaned resources
-- Keep the existing restore endpoint shape as the explicit “resume sandbox” entrypoint so the UI can stay mostly unchanged:
-  - legacy sessions: restore from `snapshotUrl` into the named sandbox
-  - v2 sessions: resume the named sandbox by name
-- First implementation should prefer correctness over low-level optimization: remove the direct REST optimization entirely for this migration and route reconnect/resume/file operations through the documented SDK path.
+- Introduce one canonical web-layer interpretation of persisted session sandbox data.
+- Keep the raw stored fields for now:
+  - `sandboxState.sandboxId` = persistent sandbox name once normalized
+  - `sandboxState.expiresAt` = active runtime expiry only
+  - `snapshotUrl` = legacy snapshot ID only
+- Centralize the legacy/migration translation in a single helper that derives explicit capabilities from a session record, for example:
+  - `persistentSandboxName`
+  - `hasActiveRuntime`
+  - `resumeMode: "persistent" | "legacy-snapshot" | "none"`
+  - `legacySnapshotId`
+- After that helper exists, routes and UI should stop branching on raw `snapshotUrl`, `hasSnapshot`, `sandboxId.startsWith("session_")`, or mixed `canResumeSandbox` heuristics.
+- Keep backward compatibility in API responses during rollout by adding explicit fields first (for example `resumeMode`) and only removing old convenience flags after the UI has switched over.
 
 Changes:
-- `packages/sandbox/package.json` - upgrade `@vercel/sandbox` to the beta version.
-- `packages/sandbox/vercel/state.ts` - redefine `sandboxId` semantics as persistent sandbox name; keep legacy snapshot support during migration.
-- `packages/sandbox/vercel/sandbox.ts` - switch create/get/connect logic from `sandboxId` to `name`, return the stable name from `getState()`, add explicit resume support, and expose `delete()` for legacy cleanup if needed.
-- `packages/sandbox/vercel/connect.ts` - connect/resume by name for v2 sandboxes, keep a legacy restore path for old snapshot-based sessions, and avoid name/ID confusion in state branching.
-- `packages/sandbox/vercel/direct.ts` - remove or bypass the direct REST optimization so the provider always uses the documented SDK path.
-- `packages/sandbox/vercel/direct-operations.ts` - delete or retire the unused low-level direct-operation helpers that depend on ephemeral ids.
-- `apps/web/lib/sandbox/utils.ts` - replace the current “runtime state exists iff sandboxId exists” helpers with separate helpers for persistent identity vs active runtime session; stop clearing sandbox identity on ordinary stop/unavailability.
-- `apps/web/lib/sandbox/lifecycle.ts` - for v2 sandboxes, hibernate with `stop()` and preserve `sandboxState`; keep legacy snapshot migration logic only for old sessions.
-- `apps/web/lib/sandbox/archive-session.ts` - archive by stopping persistent named sandboxes without clearing their identity; use snapshot+restore only as a migration bridge for legacy sessions.
-- `apps/web/app/api/sandbox/route.ts` - create named sandboxes with `session_${sessionId}`, update stop semantics, and persist the stable identifier immediately.
-- `apps/web/app/api/sandbox/reconnect/route.ts` - stop clearing stable identity on stopped sandboxes; report stopped/expired status while keeping the named sandbox reference.
-- `apps/web/app/api/sandbox/status/route.ts` - compute “active vs no active session” from lifecycle timing rather than presence/absence of `sandboxId`.
-- `apps/web/app/api/sandbox/snapshot/route.ts` - repurpose restore into a generic resume endpoint: restore legacy snapshots into named sandboxes, resume v2 named sandboxes directly, and keep snapshot creation only if still needed for manual backup / legacy migration.
-- `apps/web/app/api/sessions/[sessionId]/files/route.ts` - stop converting stopped persistent sandboxes into “missing sandbox” DB state.
-- `apps/web/app/api/sessions/[sessionId]/files/content/route.ts` - same as above.
-- `apps/web/app/api/sessions/[sessionId]/skills/route.ts` - same as above.
-- `apps/web/app/api/sessions/[sessionId]/diff/route.ts` - same as above.
-- `apps/web/lib/skills-cache.ts` - keep cache scoping keyed to the stable sandbox name; remove snapshot-based cache scope fallback once legacy migration is complete.
-- `apps/web/lib/db/sessions.ts` - add helpers for deterministic sandbox naming / legacy detection and normalize session records without changing SQL schema.
+- `apps/web/lib/db/sessions.ts` - keep legacy data normalization at the DB boundary, and add/export the small set of predicates needed to recognize normalized persistent sandbox names.
+- `apps/web/lib/sandbox/session-state.ts` - new helper module that derives explicit resume/runtime state from a session record and becomes the canonical interpretation layer for the web app.
+- `apps/web/lib/sandbox/utils.ts` - reduce this file to low-level sandbox/runtime helpers; remove app-level resume/persistence decisions that belong in the new session-state helper.
+- `apps/web/lib/sandbox/lifecycle.ts` - hibernation decisions should use explicit session-state classification instead of raw `snapshotUrl` / prefix heuristics.
+- `apps/web/lib/sandbox/archive-session.ts` - same cleanup for archive finalization and legacy migration behavior.
+- `apps/web/app/api/sandbox/route.ts` - stop/delete behavior should use explicit resumable state instead of `snapshotUrl || hasSandboxIdentity(...)` style checks.
+- `apps/web/app/api/sandbox/reconnect/route.ts` - report runtime availability without collapsing persistent identity and legacy resume paths into the same implicit branch logic.
+- `apps/web/app/api/sandbox/status/route.ts` - compute active vs resumable vs missing from explicit derived state; avoid heuristic recovery logic where possible.
+- `apps/web/app/api/sandbox/snapshot/route.ts` - keep legacy snapshot restore support, but drive it through explicit `resumeMode` semantics instead of mixed fallback behavior.
+- `apps/web/app/api/sessions/[sessionId]/route.ts` - unarchive guard should use explicit resume capability instead of `snapshotUrl` plus runtime checks.
+- `apps/web/app/api/sessions/[sessionId]/diff/route.ts` - preserve resumable identity when runtime is unavailable, and return the right resume-needed response from explicit derived state.
+- `apps/web/app/api/sessions/[sessionId]/files/route.ts` - same cleanup.
+- `apps/web/app/api/sessions/[sessionId]/files/content/route.ts` - same cleanup.
+- `apps/web/app/api/sessions/[sessionId]/skills/route.ts` - same cleanup.
+- `apps/web/lib/skills-cache.ts` - scope cached skills from the normalized persistent sandbox name first, with legacy snapshot fallback only when truly needed.
+- `apps/web/app/sessions/[sessionId]/chats/[chatId]/session-chat-context.tsx` - consume explicit resume/runtime state from the APIs instead of rebuilding it locally.
+- `apps/web/app/sessions/[sessionId]/chats/[chatId]/session-chat-content.tsx` - replace `canResumeSandbox` / `hasSnapshot` UI heuristics with explicit `resumeMode` and runtime flags.
 - Tests to update alongside the implementation:
-  - `packages/sandbox/vercel/sandbox.test.ts`
-  - `packages/sandbox/vercel/direct.test.ts` (remove if the direct path is deleted, or replace with coverage that proves the SDK path is always used)
-  - `apps/web/lib/sandbox/lifecycle-evaluate.test.ts`
-  - `apps/web/lib/sandbox/archive-session.test.ts`
   - `apps/web/app/api/sandbox/route.test.ts`
   - `apps/web/app/api/sandbox/reconnect/route.test.ts`
   - `apps/web/app/api/sandbox/status/route.test.ts`
   - `apps/web/app/api/sandbox/snapshot/route.test.ts`
+  - `apps/web/lib/sandbox/lifecycle-evaluate.test.ts`
+  - `apps/web/lib/sandbox/archive-session.test.ts`
   - `apps/web/app/api/sessions/[sessionId]/files/content/route.test.ts`
   - `apps/web/app/api/sessions/[sessionId]/skills/route.test.ts`
+  - any affected tests for `files/route.ts`, session unarchive flow, and chat context/UI state handling
 
 Verification:
-- Unit-test the provider layer to prove:
-  - new sandboxes are created with `name: session_${sessionId}`
-  - reconnect/resume uses name-based lookup
-  - `getState()` always returns the stable sandbox name
-  - v2 stop does not clear persistent identity
-  - legacy snapshot restore migrates into the deterministic name
-- API tests should prove:
-  - create persists the stable name immediately
-  - stop/archive leave the stable sandbox name in DB
-  - reconnect/status no longer treat a stopped named sandbox as “missing state”
-  - resume works for both migrated v2 sessions and legacy snapshot-backed sessions
-  - file/skill/diff routes preserve identity when a sandbox is stopped/unavailable
-- Run repository checks after implementation:
+- Unit/API tests should prove:
+  - persistent sandbox identity survives pause/stop/archive
+  - legacy snapshot-backed sessions still resume correctly
+  - routes no longer infer resumability from mixed raw fields
+  - UI shows paused/resumable state from explicit server data, not client heuristics
+- After implementation, run:
   - `bun run check`
   - `bun run typecheck`
   - `bun run test:isolated`
   - `bun run --cwd apps/web db:check`
-- Edge cases to verify manually/in tests:
-  - brand new session
-  - paused/resumed v2 session
-  - archived/unarchived v2 session
-  - legacy archived session with only `snapshotUrl`
-  - legacy active session that migrates on first pause/archive
-  - failed resume when the named sandbox was deleted remotely
-  - skills cache continuity across stop/resume with the same stable sandbox name
+- Targeted regression tests to watch closely during iteration:
+  - `bun run test:verbose apps/web/app/api/sandbox/reconnect/route.test.ts`
+  - `bun run test:verbose apps/web/app/api/sandbox/status/route.test.ts`
+  - `bun run test:verbose apps/web/lib/sandbox/lifecycle-evaluate.test.ts`
+  - `bun run test:verbose apps/web/lib/sandbox/archive-session.test.ts`
+  - `bun run test:verbose packages/sandbox/vercel/sandbox.test.ts`
 
-Open implementation note:
-- Since we are dropping the direct path, implementation should remove that branch early so the rest of the migration only has one execution path to reason about.
+Open note:
+- In this pass, behavior cleanup comes first. The physical schema/API rename from `snapshotUrl` to `snapshotId` should be a follow-up once the app stops depending on the old overloaded semantics.
