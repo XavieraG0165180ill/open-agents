@@ -7,6 +7,7 @@ import {
 import { updateSession } from "@/lib/db/sessions";
 import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";
 import { buildHibernatedLifecycleUpdate } from "@/lib/sandbox/lifecycle";
+import { getSessionSandboxState } from "@/lib/sandbox/session-state";
 import {
   clearSandboxState,
   hasRuntimeSandboxState,
@@ -55,8 +56,16 @@ export async function GET(req: Request, context: RouteContext) {
 
   const { sessionRecord } = sessionContext;
   const sandboxState = sessionRecord.sandboxState;
+  const sessionSandbox = getSessionSandboxState(sessionRecord);
   if (!sandboxState) {
-    return Response.json({ error: "Sandbox not initialized" }, { status: 400 });
+    return Response.json(
+      {
+        error: sessionSandbox.canResume
+          ? "Sandbox is unavailable. Please resume sandbox."
+          : "Sandbox not initialized",
+      },
+      { status: sessionSandbox.canResume ? 409 : 400 },
+    );
   }
 
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
@@ -69,7 +78,14 @@ export async function GET(req: Request, context: RouteContext) {
   }
 
   if (!hasRuntimeSandboxState(sandboxState)) {
-    return Response.json({ error: "Sandbox not initialized" }, { status: 400 });
+    return Response.json(
+      {
+        error: sessionSandbox.canResume
+          ? "Sandbox is unavailable. Please resume sandbox."
+          : "Sandbox not initialized",
+      },
+      { status: sessionSandbox.canResume ? 409 : 400 },
+    );
   }
 
   try {

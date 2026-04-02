@@ -114,7 +114,6 @@ import {
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { DEFAULT_CONTEXT_LIMIT } from "@/lib/models";
 import { getPrDeploymentRefreshInterval } from "@/lib/pr-deployment-polling";
-import { canResumeSandbox } from "@/lib/sandbox/utils";
 import { fetcher } from "@/lib/swr";
 import { streamdownPlugins } from "@/lib/streamdown-config";
 import { cn } from "@/lib/utils";
@@ -1002,7 +1001,7 @@ export function SessionChatContent({
     supportsDiff,
     supportsRepoCreation,
     hasRuntimeSandboxState,
-    hasSnapshot,
+    resumeMode,
     setSandboxTypeFromUnknown,
     reconnectionStatus,
     lifecycleTiming,
@@ -1022,10 +1021,7 @@ export function SessionChatContent({
     hadInitialMessages,
     initialMessages,
   } = useSessionChatRuntimeContext();
-  const canResumeSavedSandbox = canResumeSandbox(
-    session.sandboxState,
-    hasSnapshot ? (session.snapshotUrl ?? "snapshot") : null,
-  );
+  const canResumeSavedSandbox = resumeMode !== "none";
   const {
     sandboxInfo,
     diff,

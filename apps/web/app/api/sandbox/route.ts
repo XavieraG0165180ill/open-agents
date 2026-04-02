@@ -23,11 +23,8 @@ import {
   getVercelCliSandboxSetup,
   syncVercelCliAuthToSandbox,
 } from "@/lib/sandbox/vercel-cli-auth";
-import {
-  canOperateOnSandbox,
-  clearSandboxState,
-  hasSandboxIdentity,
-} from "@/lib/sandbox/utils";
+import { getSessionSandboxState } from "@/lib/sandbox/session-state";
+import { canOperateOnSandbox, clearSandboxState } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { buildDevelopmentDotenvFromVercelProject } from "@/lib/vercel/projects";
 import { getUserVercelToken } from "@/lib/vercel/token";
@@ -347,13 +344,15 @@ export async function DELETE(req: Request) {
   await sandbox.stop();
 
   const clearedSandboxState = clearSandboxState(sessionRecord.sandboxState);
+  const resumableState = getSessionSandboxState({
+    id: sessionRecord.id,
+    sandboxState: clearedSandboxState,
+    snapshotUrl: sessionRecord.snapshotUrl,
+  });
 
   await updateSession(sessionId, {
     sandboxState: clearedSandboxState,
-    lifecycleState:
-      sessionRecord.snapshotUrl || hasSandboxIdentity(clearedSandboxState)
-        ? "hibernated"
-        : "provisioning",
+    lifecycleState: resumableState.canResume ? "hibernated" : "provisioning",
     sandboxExpiresAt: null,
     hibernateAfter: null,
     lifecycleRunId: null,

@@ -1,7 +1,6 @@
 import type { SandboxState } from "@open-harness/sandbox";
+import { isPersistentSessionSandboxName } from "./session-state";
 import { SANDBOX_EXPIRES_BUFFER_MS } from "./config";
-
-const PERSISTENT_SANDBOX_NAME_PREFIX = "session_";
 
 function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -30,11 +29,7 @@ export function hasSandboxIdentity(state: unknown): boolean {
 }
 
 export function hasPersistentSandboxState(state: unknown): boolean {
-  const sandboxId = getSandboxId(state);
-  return (
-    sandboxId !== undefined &&
-    sandboxId.startsWith(PERSISTENT_SANDBOX_NAME_PREFIX)
-  );
+  return isPersistentSessionSandboxName(getSandboxId(state));
 }
 
 /**
@@ -74,16 +69,6 @@ export function hasRuntimeSandboxState(state: unknown): boolean {
   }
 
   return getExpiresAt(state) !== undefined;
-}
-
-export function canResumeSandbox(
-  state: SandboxState | null | undefined,
-  snapshotUrl?: string | null,
-): boolean {
-  return (
-    hasSandboxIdentity(state) ||
-    (typeof snapshotUrl === "string" && snapshotUrl.length > 0)
-  );
 }
 
 /**

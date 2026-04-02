@@ -5,7 +5,7 @@ import {
   updateSession,
 } from "@/lib/db/sessions";
 import { archiveSession } from "@/lib/sandbox/archive-session";
-import { hasRuntimeSandboxState } from "@/lib/sandbox/utils";
+import { getSessionSandboxState } from "@/lib/sandbox/session-state";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 interface UpdateSessionRequest {
@@ -73,10 +73,12 @@ export async function PATCH(
   const shouldUnarchive =
     body.status === "running" && existingSession.status === "archived";
 
+  const sessionSandbox = getSessionSandboxState(existingSession);
+
   if (
     shouldUnarchive &&
-    !existingSession.snapshotUrl &&
-    hasRuntimeSandboxState(existingSession.sandboxState)
+    !sessionSandbox.canResume &&
+    sessionSandbox.hasActiveRuntime
   ) {
     return Response.json(
       {

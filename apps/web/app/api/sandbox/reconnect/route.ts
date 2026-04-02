@@ -10,8 +10,11 @@ import {
   getSandboxExpiresAtDate,
 } from "@/lib/sandbox/lifecycle";
 import {
+  getSessionSandboxState,
+  type SessionSandboxResumeMode,
+} from "@/lib/sandbox/session-state";
+import {
   clearSandboxState,
-  hasSandboxIdentity,
   isSandboxUnavailableError,
 } from "@/lib/sandbox/utils";
 
@@ -24,6 +27,7 @@ export type ReconnectStatus =
 export type ReconnectResponse = {
   status: ReconnectStatus;
   hasSnapshot: boolean;
+  resumeMode: SessionSandboxResumeMode;
   /** Timestamp (ms) when sandbox expires. Only present when status is "connected". */
   expiresAt?: number;
   lifecycle: {
@@ -75,15 +79,17 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const { sessionRecord } = sessionContext;
+  const sessionSandbox = getSessionSandboxState(sessionRecord);
 
   const state = sessionRecord.sandboxState;
-  if (!state || !hasSandboxIdentity(state)) {
+  if (!state || !sessionSandbox.hasSandboxIdentity) {
     console.log(
-      `[Reconnect] session=${sessionId} status=no_sandbox hasSnapshot=${!!sessionRecord.snapshotUrl} hasIdentity=false`,
+      `[Reconnect] session=${sessionId} status=no_sandbox hasSnapshot=${sessionSandbox.hasLegacySnapshot} hasIdentity=false`,
     );
     return Response.json({
       status: "no_sandbox",
-      hasSnapshot: !!sessionRecord.snapshotUrl,
+      hasSnapshot: sessionSandbox.hasLegacySnapshot,
+      resumeMode: sessionSandbox.resumeMode,
       lifecycle: buildLifecyclePayload(sessionRecord),
     } satisfies ReconnectResponse);
   }
@@ -129,12 +135,18 @@ export async function GET(req: Request): Promise<Response> {
         : {}),
     });
 
+    const refreshedSessionSandbox = getSessionSandboxState({
+      id: sessionRecord.id,
+      sandboxState: refreshedState,
+      snapshotUrl: sessionRecord.snapshotUrl,
+    });
     console.log(
-      `[Reconnect] session=${sessionId} status=connected hasSnapshot=${!!sessionRecord.snapshotUrl} expiresAt=${sandbox.expiresAt ?? "null"}`,
+      `[Reconnect] session=${sessionId} status=connected hasSnapshot=${refreshedSessionSandbox.hasLegacySnapshot} expiresAt=${sandbox.expiresAt ?? "null"}`,
     );
     return Response.json({
       status: "connected",
-      hasSnapshot: !!sessionRecord.snapshotUrl,
+      hasSnapshot: refreshedSessionSandbox.hasLegacySnapshot,
+      resumeMode: refreshedSessionSandbox.resumeMode,
       expiresAt: sandbox.expiresAt,
       lifecycle: buildLifecyclePayload(updatedSession ?? sessionRecord),
     } satisfies ReconnectResponse);
@@ -153,23 +165,31 @@ export async function GET(req: Request): Promise<Response> {
           : undefined;
       return Response.json({
         status: "connected",
-        hasSnapshot: !!sessionRecord.snapshotUrl,
+        hasSnapshot: sessionSandbox.hasLegacySnapshot,
+        resumeMode: sessionSandbox.resumeMode,
         expiresAt: safeExpiresAt,
         lifecycle: buildLifecyclePayload(sessionRecord),
       } satisfies ReconnectResponse);
     }
 
     // Sandbox no longer exists (expired or stopped)
+    const clearedSandboxState = clearSandboxState(sessionRecord.sandboxState);
     await updateSession(sessionId, {
-      sandboxState: clearSandboxState(sessionRecord.sandboxState),
+      sandboxState: clearedSandboxState,
       ...buildHibernatedLifecycleUpdate(),
     });
+    const clearedSessionSandbox = getSessionSandboxState({
+      id: sessionRecord.id,
+      sandboxState: clearedSandboxState,
+      snapshotUrl: sessionRecord.snapshotUrl,
+    });
     console.error(
-      `[Reconnect] session=${sessionId} status=expired hasSnapshot=${!!sessionRecord.snapshotUrl} error=${message}`,
+      `[Reconnect] session=${sessionId} status=expired hasSnapshot=${clearedSessionSandbox.hasLegacySnapshot} error=${message}`,
     );
     return Response.json({
       status: "expired",
-      hasSnapshot: !!sessionRecord.snapshotUrl,
+      hasSnapshot: clearedSessionSandbox.hasLegacySnapshot,
+      resumeMode: clearedSessionSandbox.resumeMode,
       lifecycle: {
         serverTime: Date.now(),
         state: "hibernated",

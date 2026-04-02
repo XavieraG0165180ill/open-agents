@@ -15,6 +15,7 @@ type AuthResult =
 type TestSandboxState = {
   type: string;
   sandboxId?: string;
+  expiresAt?: number;
 };
 
 type OwnedSessionResult =
@@ -54,6 +55,7 @@ let ownedSessionResult: OwnedSessionResult = {
     sandboxState: {
       type: "vercel",
       sandboxId: "sbx-1",
+      expiresAt: Date.now() + 60_000,
     },
   },
 };
@@ -66,7 +68,7 @@ let readFileImplementation: (
 
 mock.module("@/app/api/sessions/_lib/session-context", () => ({
   requireAuthenticatedUser: async () => authResult,
-  requireOwnedSessionWithSandboxGuard: async () => ownedSessionResult,
+  requireOwnedSession: async () => ownedSessionResult,
 }));
 
 mock.module("@open-harness/sandbox", () => ({
@@ -103,7 +105,7 @@ mock.module("@/lib/sandbox/lifecycle", () => ({
 mock.module("@/lib/sandbox/utils", () => ({
   clearSandboxState: () => null,
   hasRuntimeSandboxState: (state: TestSandboxState | null) =>
-    Boolean(state?.sandboxId),
+    Boolean(state?.sandboxId && typeof state.expiresAt === "number"),
   isSandboxUnavailableError: (message: string) =>
     message.toLowerCase().includes("sandbox unavailable"),
 }));
@@ -137,6 +139,7 @@ describe("/api/sessions/[sessionId]/files/content", () => {
         sandboxState: {
           type: "vercel",
           sandboxId: "sbx-1",
+          expiresAt: Date.now() + 60_000,
         },
       },
     };
@@ -208,6 +211,7 @@ describe("/api/sessions/[sessionId]/files/content", () => {
       {
         type: "vercel",
         sandboxId: "sbx-1",
+        expiresAt: expect.any(Number),
       },
     ]);
     expect(statCalls).toEqual(["/workspace/apps/web/lib/test file.ts"]);
@@ -259,6 +263,34 @@ describe("/api/sessions/[sessionId]/files/content", () => {
     expect(response.status).toBe(404);
     expect(body.error).toBe("File not found");
     expect(readFileCalls).toHaveLength(0);
+  });
+
+  test("returns resume-needed when the session has a paused persistent sandbox", async () => {
+    ownedSessionResult = {
+      ok: true,
+      sessionRecord: {
+        id: "session-1",
+        userId: "user-1",
+        sandboxState: {
+          type: "vercel",
+          sandboxId: "session_session-1",
+        },
+      },
+    };
+    const { GET } = await loadRouteModule();
+
+    const response = await GET(
+      new Request(
+        "http://localhost/api/sessions/session-1/files/content?path=apps/web/lib/test.ts",
+      ),
+      createContext(),
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe("Sandbox is unavailable. Please resume sandbox.");
+    expect(connectCalls).toHaveLength(0);
+    expect(updateCalls).toHaveLength(0);
   });
 
   test("marks the session hibernated when the sandbox is unavailable", async () => {

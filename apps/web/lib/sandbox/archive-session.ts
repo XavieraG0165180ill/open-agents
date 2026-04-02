@@ -11,11 +11,8 @@ import {
   getPullRequestStatus,
 } from "@/lib/github/client";
 import { getRepoToken } from "@/lib/github/get-repo-token";
-import {
-  canOperateOnSandbox,
-  clearSandboxState,
-  hasPersistentSandboxState,
-} from "./utils";
+import { getSessionSandboxState } from "./session-state";
+import { canOperateOnSandbox, clearSandboxState } from "./utils";
 
 type SessionRecord = NonNullable<Awaited<ReturnType<typeof getSessionById>>>;
 type SessionUpdateInput = Parameters<typeof updateSession>[1];
@@ -169,11 +166,12 @@ async function finalizeArchivedSessionSandbox(
     }
 
     const sandboxState = archivedSession.sandboxState;
+    const sessionSandbox = getSessionSandboxState(archivedSession);
     const sandbox = await connectSandbox(sandboxState);
 
     let sandboxPatch: SessionUpdateInput;
 
-    if (hasPersistentSandboxState(sandboxState)) {
+    if (sessionSandbox.hasPersistentSandbox) {
       await sandbox.stop();
       sandboxPatch = {
         snapshotUrl: null,
@@ -188,7 +186,9 @@ async function finalizeArchivedSessionSandbox(
           snapshotCreatedAt: new Date(),
           sandboxState: {
             type: sandboxState.type,
-            sandboxId: buildSessionSandboxName(sessionId),
+            sandboxId:
+              sessionSandbox.resumeTargetSandboxName ??
+              buildSessionSandboxName(sessionId),
           },
         };
       } catch (snapshotError) {
@@ -236,8 +236,9 @@ async function finalizeArchivedSessionSandbox(
         lifecycleError: `Archive finalization failed: ${errorMessage}`,
       };
 
+      const sessionSandbox = getSessionSandboxState(sessionAfterFailure);
       if (
-        !sessionAfterFailure.snapshotUrl &&
+        !sessionSandbox.canResume &&
         canOperateOnSandbox(sessionAfterFailure.sandboxState)
       ) {
         failurePatch.sandboxState = clearSandboxState(

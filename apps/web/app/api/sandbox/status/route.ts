@@ -10,13 +10,14 @@ import {
 } from "@/lib/sandbox/lifecycle";
 import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
 import {
-  hasRuntimeSandboxState,
-  hasSandboxIdentity,
-} from "@/lib/sandbox/utils";
+  getSessionSandboxState,
+  type SessionSandboxResumeMode,
+} from "@/lib/sandbox/session-state";
 
 export type SandboxStatusResponse = {
   status: "active" | "no_sandbox";
   hasSnapshot: boolean;
+  resumeMode: SessionSandboxResumeMode;
   lifecycleVersion: number;
   lifecycle: {
     serverTime: number;
@@ -70,9 +71,10 @@ export async function GET(req: Request): Promise<Response> {
   const runtimeSandboxExpiresAt = getSandboxExpiresAtDate(
     sessionRecord.sandboxState,
   );
+  const sessionSandbox = getSessionSandboxState(sessionRecord);
   const hasRecoverableFailedLifecycle =
     sessionRecord.lifecycleState === "failed" &&
-    hasRuntimeSandboxState(sessionRecord.sandboxState) &&
+    sessionSandbox.hasActiveRuntime &&
     !isSessionExpired({ sandboxExpiresAt: runtimeSandboxExpiresAt });
 
   // If the lifecycle evaluator previously failed but runtime state is still
@@ -88,19 +90,12 @@ export async function GET(req: Request): Promise<Response> {
     }
   }
 
+  const effectiveSandbox = getSessionSandboxState(effectiveSessionRecord);
   const effectiveIsExpired = isSessionExpired(effectiveSessionRecord);
-  const effectiveHasRuntimeState = hasRuntimeSandboxState(
-    effectiveSessionRecord.sandboxState,
-  );
-  const effectiveHasIdentity = hasSandboxIdentity(
-    effectiveSessionRecord.sandboxState,
-  );
   const effectiveIsActive =
     isLifecycleActiveState(effectiveSessionRecord.lifecycleState) &&
     !effectiveIsExpired &&
-    (effectiveHasRuntimeState ||
-      (effectiveHasIdentity &&
-        effectiveSessionRecord.lifecycleState !== "active"));
+    effectiveSandbox.hasActiveRuntime;
 
   // Safety net: if the sandbox has stale runtime state (expired or overdue for
   // hibernation), kick the lifecycle to clean up DB state in the background.
@@ -117,7 +112,8 @@ export async function GET(req: Request): Promise<Response> {
 
   return Response.json({
     status: effectiveIsActive ? "active" : "no_sandbox",
-    hasSnapshot: !!effectiveSessionRecord.snapshotUrl,
+    hasSnapshot: effectiveSandbox.hasLegacySnapshot,
+    resumeMode: effectiveSandbox.resumeMode,
     lifecycleVersion: effectiveSessionRecord.lifecycleVersion,
     lifecycle: {
       serverTime: Date.now(),

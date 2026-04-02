@@ -1,10 +1,11 @@
 import { connectSandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
-  requireOwnedSessionWithSandboxGuard,
+  requireOwnedSession,
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
 import { buildHibernatedLifecycleUpdate } from "@/lib/sandbox/lifecycle";
+import { getSessionSandboxState } from "@/lib/sandbox/session-state";
 import {
   clearSandboxState,
   hasRuntimeSandboxState,
@@ -87,11 +88,9 @@ export async function GET(_req: Request, context: RouteContext) {
 
   const { sessionId } = await context.params;
 
-  const sessionContext = await requireOwnedSessionWithSandboxGuard({
+  const sessionContext = await requireOwnedSession({
     userId: authResult.userId,
     sessionId,
-    sandboxGuard: hasRuntimeSandboxState,
-    sandboxErrorMessage: "Sandbox not initialized",
   });
   if (!sessionContext.ok) {
     return sessionContext.response;
@@ -99,8 +98,16 @@ export async function GET(_req: Request, context: RouteContext) {
 
   const { sessionRecord } = sessionContext;
   const sandboxState = sessionRecord.sandboxState;
-  if (!sandboxState) {
-    return Response.json({ error: "Sandbox not initialized" }, { status: 400 });
+  const sessionSandbox = getSessionSandboxState(sessionRecord);
+  if (!sandboxState || !hasRuntimeSandboxState(sandboxState)) {
+    return Response.json(
+      {
+        error: sessionSandbox.canResume
+          ? "Sandbox is unavailable. Please resume sandbox."
+          : "Sandbox not initialized",
+      },
+      { status: sessionSandbox.canResume ? 409 : 400 },
+    );
   }
 
   try {

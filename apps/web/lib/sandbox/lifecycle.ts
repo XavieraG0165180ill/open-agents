@@ -15,11 +15,8 @@ import {
   SANDBOX_EXPIRES_BUFFER_MS,
   SANDBOX_INACTIVITY_TIMEOUT_MS,
 } from "./config";
-import {
-  canOperateOnSandbox,
-  clearSandboxState,
-  hasPersistentSandboxState,
-} from "./utils";
+import { getSessionSandboxState } from "./session-state";
+import { canOperateOnSandbox, clearSandboxState } from "./utils";
 
 export type SandboxLifecycleState =
   | "provisioning"
@@ -198,6 +195,7 @@ export async function evaluateSandboxLifecycle(
   }
 
   const sandboxState = session.sandboxState;
+  const sessionSandbox = getSessionSandboxState(session);
   if (!canOperateOnSandbox(sandboxState)) {
     return { action: "skipped", reason: "sandbox-not-operable" };
   }
@@ -230,7 +228,7 @@ export async function evaluateSandboxLifecycle(
       return { action: "skipped", reason: "active-workflow" };
     }
 
-    if (hasPersistentSandboxState(sandboxState)) {
+    if (sessionSandbox.hasPersistentSandbox) {
       await sandbox.stop();
       await updateSession(sessionId, {
         snapshotUrl: null,
@@ -239,7 +237,7 @@ export async function evaluateSandboxLifecycle(
         ...buildHibernatedLifecycleUpdate(),
       });
       console.log(
-        `[Lifecycle] Hibernated persistent sandbox for session ${sessionId} (reason=${reason}, sandboxId=${sandboxState.sandboxId}).`,
+        `[Lifecycle] Hibernated persistent sandbox for session ${sessionId} (reason=${reason}, sandboxId=${sessionSandbox.persistentSandboxName}).`,
       );
       return { action: "hibernated" };
     }
@@ -287,7 +285,9 @@ export async function evaluateSandboxLifecycle(
     const snapshotCreatedAt = new Date();
     const migratedState = {
       type: sandboxState.type,
-      sandboxId: buildSessionSandboxName(sessionId),
+      sandboxId:
+        sessionSandbox.resumeTargetSandboxName ??
+        buildSessionSandboxName(sessionId),
     } satisfies SandboxState;
 
     await updateSession(sessionId, {

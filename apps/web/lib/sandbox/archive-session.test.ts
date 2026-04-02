@@ -273,6 +273,49 @@ describe("archiveSession", () => {
     });
   });
 
+  test("preserves persistent sandbox identity when archive finalization stops a named sandbox", async () => {
+    const { archiveSession } = await archiveSessionModulePromise;
+
+    sessionRecord = makeSessionRecord({
+      sandboxState: {
+        type: "vercel",
+        sandboxId: "session_session-1",
+        expiresAt: Date.now() + 5 * 60_000,
+      },
+    });
+    sandboxQueue = [createMockSandbox(), createMockSandbox()];
+
+    let backgroundTask: Promise<void> | null = null;
+
+    const result = await archiveSession("session-1", {
+      logPrefix: "[Test]",
+      scheduleBackgroundWork: (callback) => {
+        backgroundTask = callback();
+      },
+    });
+
+    expect(result.archiveTriggered).toBe(true);
+    if (!backgroundTask) {
+      throw new Error("Expected archive finalization task to be scheduled");
+    }
+    await backgroundTask;
+
+    const updateCalls = spies.updateSession.mock.calls as Array<
+      [string, Record<string, unknown>]
+    >;
+    const finalPatch = updateCalls.at(-1)?.[1];
+
+    expect(finalPatch).toMatchObject({
+      snapshotUrl: null,
+      snapshotCreatedAt: null,
+      sandboxState: {
+        type: "vercel",
+        sandboxId: "session_session-1",
+      },
+      lifecycleState: "archived",
+    });
+  });
+
   test("refreshes merged PR status before archiving", async () => {
     const { archiveSession } = await archiveSessionModulePromise;
 

@@ -30,6 +30,10 @@ import { useSessionSkills } from "@/hooks/use-session-skills";
 import type { Chat, Session } from "@/lib/db/schema";
 import { type ModelOption, withMissingModelOption } from "@/lib/model-options";
 import {
+  getSessionSandboxState,
+  type SessionSandboxResumeMode,
+} from "@/lib/sandbox/session-state";
+import {
   clearSandboxState,
   hasRuntimeSandboxState as hasRuntimeSandboxStateValue,
 } from "@/lib/sandbox/utils";
@@ -164,6 +168,8 @@ type SessionChatContextValue = {
   hasRuntimeSandboxState: boolean;
   /** Whether the session currently has a saved snapshot available */
   hasSnapshot: boolean;
+  /** Explicit resume source for the current session */
+  resumeMode: SessionSandboxResumeMode;
   /** Update sandbox type in session state if valid */
   setSandboxTypeFromUnknown: (type: unknown) => void;
   /** Current status of sandbox reconnection attempt */
@@ -246,6 +252,7 @@ type SessionChatMetadataContextValue = Pick<
   | "supportsRepoCreation"
   | "hasRuntimeSandboxState"
   | "hasSnapshot"
+  | "resumeMode"
   | "setSandboxTypeFromUnknown"
   | "reconnectionStatus"
   | "lifecycleTiming"
@@ -756,7 +763,21 @@ export function SessionChatProvider({
   const hasRuntimeSandboxState = hasRuntimeSandboxStateValue(
     sessionRecord.sandboxState,
   );
-  const hasSnapshot = hasSnapshotState || !!sessionRecord.snapshotUrl;
+  const sessionSandbox = useMemo(() => {
+    const derivedState = getSessionSandboxState(sessionRecord);
+    if (derivedState.resumeMode !== "none" || !hasSnapshotState) {
+      return derivedState;
+    }
+
+    return {
+      ...derivedState,
+      hasLegacySnapshot: true,
+      resumeMode: "legacy-snapshot" as const,
+      canResume: true,
+    };
+  }, [sessionRecord, hasSnapshotState]);
+  const hasSnapshot = sessionSandbox.hasLegacySnapshot;
+  const resumeMode = sessionSandbox.resumeMode;
 
   // Use SWR hooks for diff and files
   const sandboxConnected = sandboxInfo !== null;
@@ -1071,6 +1092,7 @@ export function SessionChatProvider({
       supportsRepoCreation,
       hasRuntimeSandboxState,
       hasSnapshot,
+      resumeMode,
       setSandboxTypeFromUnknown,
       reconnectionStatus,
       lifecycleTiming,
@@ -1097,6 +1119,7 @@ export function SessionChatProvider({
       supportsRepoCreation,
       hasRuntimeSandboxState,
       hasSnapshot,
+      resumeMode,
       setSandboxTypeFromUnknown,
       reconnectionStatus,
       lifecycleTiming,

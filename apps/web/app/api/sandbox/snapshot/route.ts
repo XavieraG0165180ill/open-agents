@@ -15,10 +15,10 @@ import {
   getNextLifecycleVersion,
 } from "@/lib/sandbox/lifecycle";
 import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
+import { getSessionSandboxState } from "@/lib/sandbox/session-state";
 import {
   canOperateOnSandbox,
   clearSandboxState,
-  hasPersistentSandboxState,
   hasRuntimeSandboxState,
   isSandboxUnavailableError,
 } from "@/lib/sandbox/utils";
@@ -161,20 +161,15 @@ export async function PUT(req: Request) {
   }
 
   const sandboxState = sessionRecord.sandboxState;
+  const sessionSandbox = getSessionSandboxState(sessionRecord);
   const sandboxType = sandboxState.type;
   const sandboxName =
-    typeof sandboxState.sandboxId === "string" &&
-    sandboxState.sandboxId.length > 0
-      ? sandboxState.sandboxId
-      : buildSessionSandboxName(sessionId);
-  const hasLegacySnapshot = Boolean(sessionRecord.snapshotUrl);
-  const canResumeNamedSandbox = hasPersistentSandboxState(sandboxState);
+    sessionSandbox.resumeTargetSandboxName ??
+    buildSessionSandboxName(sessionId);
+  const hasLegacySnapshot = sessionSandbox.hasLegacySnapshot;
+  const canResumeNamedSandbox = sessionSandbox.hasPersistentSandbox;
 
-  if (
-    !hasLegacySnapshot &&
-    !canResumeNamedSandbox &&
-    hasRuntimeSandboxState(sandboxState)
-  ) {
+  if (!sessionSandbox.canResume && hasRuntimeSandboxState(sandboxState)) {
     console.warn(
       `[Snapshot Restore] session=${sessionId} pending=true sandboxType=${sandboxType}`,
     );
@@ -187,7 +182,7 @@ export async function PUT(req: Request) {
     );
   }
 
-  if (!hasLegacySnapshot && !canResumeNamedSandbox) {
+  if (!sessionSandbox.canResume) {
     console.error(
       `[Snapshot Restore] session=${sessionId} error=no_resume_source sandboxType=${sandboxType}`,
     );
@@ -204,7 +199,9 @@ export async function PUT(req: Request) {
     return Response.json({
       success: true,
       alreadyRunning: true,
-      restoredFrom: hasLegacySnapshot ? sessionRecord.snapshotUrl : sandboxName,
+      restoredFrom: hasLegacySnapshot
+        ? sessionSandbox.legacySnapshotId
+        : (sessionSandbox.persistentSandboxName ?? sandboxName),
     });
   }
 
@@ -219,7 +216,7 @@ export async function PUT(req: Request) {
     });
 
   const restoreLegacySnapshot = async () => {
-    if (!sessionRecord.snapshotUrl) {
+    if (!sessionSandbox.legacySnapshotId) {
       throw new Error("No legacy snapshot available for restoration");
     }
 
@@ -227,7 +224,7 @@ export async function PUT(req: Request) {
       state: {
         type: sandboxType,
         sandboxId: sandboxName,
-        snapshotId: sessionRecord.snapshotUrl,
+        snapshotId: sessionSandbox.legacySnapshotId,
       },
       options: {
         timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
@@ -251,11 +248,11 @@ export async function PUT(req: Request) {
         }
 
         sandbox = await restoreLegacySnapshot();
-        restoredFrom = sessionRecord.snapshotUrl ?? sandboxName;
+        restoredFrom = sessionSandbox.legacySnapshotId ?? sandboxName;
       }
     } else {
       sandbox = await restoreLegacySnapshot();
-      restoredFrom = sessionRecord.snapshotUrl ?? sandboxName;
+      restoredFrom = sessionSandbox.legacySnapshotId ?? sandboxName;
     }
 
     const newState = sandbox.getState?.();
