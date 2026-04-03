@@ -24,6 +24,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLeaderboardRank } from "@/hooks/use-leaderboard-rank";
 import { useSession } from "@/hooks/use-session";
@@ -70,9 +75,9 @@ function formatRelativeTime(date: Date): string {
   const diffDays = Math.floor(diffMs / 86_400_000);
 
   if (diffMins < 1) return "now";
-  if (diffMins < 60) return `${diffMins}m`;
-  if (diffHours < 24) return `${diffHours}h`;
-  if (diffDays < 7) return `${diffDays}d`;
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
 
   return date.toLocaleDateString("en-US", {
     month: "short",
@@ -180,61 +185,54 @@ function SessionPopoverContent({ session }: { session: SessionWithUnread }) {
     new Date(session.lastActivityAt ?? session.createdAt),
   );
   const prUrl = getSessionPrUrl(session);
+  const hasDiff = session.linesAdded !== null || session.linesRemoved !== null;
+  const hasSecondRow = hasDiff || prUrl;
 
   return (
-    <div className="space-y-3">
-      <div>
-        <p className="text-sm font-medium text-foreground leading-snug">
-          {session.title}
-        </p>
-      </div>
+    <div className="space-y-2">
+      {/* Title */}
+      <p className="text-sm font-medium text-foreground leading-snug">
+        {session.title}
+      </p>
 
-      <div className="flex items-center gap-2">
+      {/* Status · branch · time — all inline */}
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         {getSessionStatusIcon(session)}
-        <span className="text-xs text-muted-foreground">
-          {getSessionStatusLabel(session)}
-        </span>
-        <span className="text-[10px] text-muted-foreground/60">·</span>
-        <span className="text-[10px] text-muted-foreground/60">
-          {lastActivityLabel} ago
-        </span>
+        <span>{getSessionStatusLabel(session)}</span>
+        {session.branch ? (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="truncate font-mono text-[11px]">
+              {session.branch}
+            </span>
+          </>
+        ) : null}
+        <span className="text-muted-foreground/40">·</span>
+        <span className="shrink-0">{lastActivityLabel}</span>
       </div>
 
-      {session.repoOwner && session.repoName ? (
-        <p className="text-xs text-muted-foreground">
-          {session.repoOwner}/{session.repoName}
-        </p>
-      ) : null}
-
-      {session.linesAdded !== null || session.linesRemoved !== null ? (
-        <div className="flex items-center gap-2">
-          <DiffStats
-            added={session.linesAdded}
-            removed={session.linesRemoved}
-          />
+      {/* Diff count · PR link — all inline */}
+      {hasSecondRow ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {hasDiff ? (
+            <DiffStats
+              added={session.linesAdded}
+              removed={session.linesRemoved}
+            />
+          ) : null}
+          {prUrl ? (
+            <a
+              href={prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 hover:text-foreground transition-colors"
+            >
+              <GitPullRequest className="h-3 w-3" />
+              <span>#{session.prNumber}</span>
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          ) : null}
         </div>
-      ) : null}
-
-      {session.branch ? (
-        <div className="flex items-center gap-1.5">
-          <GitBranch className="h-3 w-3 text-muted-foreground/60" />
-          <span className="font-mono text-[11px] text-muted-foreground truncate">
-            {session.branch}
-          </span>
-        </div>
-      ) : null}
-
-      {prUrl ? (
-        <a
-          href={prUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <GitPullRequest className="h-3 w-3" />
-          <span>#{session.prNumber}</span>
-          <ExternalLink className="h-2.5 w-2.5" />
-        </a>
       ) : null}
     </div>
   );
@@ -337,8 +335,10 @@ const SessionRow = memo(function SessionRow({
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
+    // Immediately hide archive button
+    setIsHovered(false);
+    // Delay popover close so user can move mouse to it
     leaveTimeoutRef.current = setTimeout(() => {
-      setIsHovered(false);
       setPopoverOpen(false);
     }, 200);
   }, []);
@@ -355,7 +355,7 @@ const SessionRow = memo(function SessionRow({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-[background-color,border-color,opacity] cursor-pointer ${
+          className={`group relative flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none transition-[background-color,opacity] cursor-pointer ${
             isActive ? "bg-sidebar-active" : "hover:bg-muted/50"
           } ${isPending ? "opacity-80" : "opacity-100"}`}
           style={sessionRowPerformanceStyle}
@@ -386,17 +386,24 @@ const SessionRow = memo(function SessionRow({
           {/* Right side: diff stats or archive button on hover */}
           <span className="flex shrink-0 items-center">
             {showArchiveButton ? (
-              <button
-                type="button"
-                className="rounded p-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground transition-colors"
-                aria-label="Archive session"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onArchiveSession(session);
-                }}
-              >
-                <Archive className="h-3.5 w-3.5" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="rounded p-0.5 text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                    aria-label="Archive session"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onArchiveSession(session);
+                    }}
+                  >
+                    <Archive className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={4}>
+                  Archive session
+                </TooltipContent>
+              </Tooltip>
             ) : hasDiff ? (
               <DiffStats
                 added={session.linesAdded}
