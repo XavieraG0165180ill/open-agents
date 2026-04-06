@@ -34,6 +34,8 @@ let runCommandMock = async (
   stdout: async () => "",
 });
 let lastRunCommandEnv: Record<string, string> | undefined;
+let sdkStatus = "running";
+let sdkTimeoutMs = 300_000;
 
 function domainForPort(port: number): string {
   if (missingPorts.has(port)) {
@@ -48,55 +50,49 @@ function domainForPort(port: number): string {
   return domain;
 }
 
+function buildMockSdkSandbox(identifier: string) {
+  return {
+    name: identifier,
+    sandboxId: identifier,
+    status: sdkStatus,
+    timeout: sdkTimeoutMs,
+    routes: Array.from(portDomains.keys()).map((port) => {
+      const domain = portDomains.get(port) ?? `https://sbx-${port}.vercel.run`;
+      const subdomain = new URL(domain).host.replace(".vercel.run", "");
+      return { port, subdomain };
+    }),
+    domain: (port: number) => domainForPort(port),
+    runCommand: async (params: MockRunCommandParams) => {
+      runCommandCalls.push(params);
+      lastRunCommandEnv = params.env;
+      return runCommandMock(params);
+    },
+    writeFiles: async (files: { path: string; content: Buffer }[]) => {
+      writeFilesCalls.push(files);
+    },
+    readFileToBuffer: async (_opts: { path: string }) => {
+      return readFileToBufferResult;
+    },
+    stop: async () => {},
+    snapshot: async () => ({ snapshotId: "snap-created" }),
+  };
+}
+
 mock.module("@vercel/sandbox", () => ({
   Sandbox: {
     create: async (params: Record<string, unknown>) => {
       createCalls.push(params);
-      return {
-        sandboxId: "sbx-created",
-        routes: Array.from(portDomains.keys()).map((port) => {
-          const domain =
-            portDomains.get(port) ?? `https://sbx-${port}.vercel.run`;
-          const subdomain = new URL(domain).host.replace(".vercel.run", "");
-          return { port, subdomain };
-        }),
-        domain: (port: number) => domainForPort(port),
-        runCommand: async (params: MockRunCommandParams) => {
-          runCommandCalls.push(params);
-          lastRunCommandEnv = params.env;
-          return runCommandMock(params);
-        },
-        writeFiles: async (files: { path: string; content: Buffer }[]) => {
-          writeFilesCalls.push(files);
-        },
-        readFileToBuffer: async (_opts: { path: string }) => {
-          return readFileToBufferResult;
-        },
-        stop: async () => {},
-      };
+      const identifier =
+        typeof params.name === "string" ? params.name : "sbx-created";
+      if (typeof params.timeout === "number") {
+        sdkTimeoutMs = params.timeout;
+      }
+      return buildMockSdkSandbox(identifier);
     },
-    get: async ({ sandboxId }: { sandboxId: string }) => ({
-      sandboxId,
-      routes: Array.from(portDomains.keys()).map((port) => {
-        const domain =
-          portDomains.get(port) ?? `https://sbx-${port}.vercel.run`;
-        const subdomain = new URL(domain).host.replace(".vercel.run", "");
-        return { port, subdomain };
-      }),
-      domain: (port: number) => domainForPort(port),
-      runCommand: async (params: MockRunCommandParams) => {
-        runCommandCalls.push(params);
-        lastRunCommandEnv = params.env;
-        return runCommandMock(params);
-      },
-      writeFiles: async (files: { path: string; content: Buffer }[]) => {
-        writeFilesCalls.push(files);
-      },
-      readFileToBuffer: async (_opts: { path: string }) => {
-        return readFileToBufferResult;
-      },
-      stop: async () => {},
-    }),
+    get: async (params: { name?: string; sandboxId?: string }) => {
+      const identifier = params.name ?? params.sandboxId ?? "sbx-created";
+      return buildMockSdkSandbox(identifier);
+    },
   },
 }));
 
@@ -120,6 +116,8 @@ beforeEach(() => {
     stdout: async () => "",
   });
   lastRunCommandEnv = undefined;
+  sdkStatus = "running";
+  sdkTimeoutMs = 300_000;
 });
 
 describe("VercelSandbox.environmentDetails", () => {

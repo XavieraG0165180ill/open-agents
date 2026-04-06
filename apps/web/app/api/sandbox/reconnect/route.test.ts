@@ -156,7 +156,10 @@ describe("/api/sandbox/reconnect", () => {
     expect(updateCalls[0]?.sessionId).toBe("session-1");
     expect(updateCalls[0]?.patch.lifecycleState).toBe("hibernated");
     expect(updateCalls[0]?.patch.lifecycleError).toBeNull();
-    expect(updateCalls[0]?.patch.sandboxState).toEqual({ type: "vercel" });
+    expect(updateCalls[0]?.patch.sandboxState).toEqual({
+      type: "vercel",
+      sandboxName: "sbx-1",
+    });
   });
 
   test("marks sandbox expired when the reconnect probe hits a 404", async () => {
@@ -184,6 +187,9 @@ describe("/api/sandbox/reconnect", () => {
     expect(updateCalls[0]?.sessionId).toBe("session-1");
     expect(updateCalls[0]?.patch.lifecycleState).toBe("hibernated");
     expect(updateCalls[0]?.patch.lifecycleError).toBeNull();
-    expect(updateCalls[0]?.patch.sandboxState).toEqual({ type: "vercel" });
+    expect(updateCalls[0]?.patch.sandboxState).toEqual({
+      type: "vercel",
+      sandboxName: "sbx-1",
+    });
   });
 });

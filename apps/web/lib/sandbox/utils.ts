@@ -5,6 +5,39 @@ function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function getSandboxNameFromUnknown(state: unknown): string | undefined {
+  if (!state || typeof state !== "object") {
+    return undefined;
+  }
+
+  const sandboxState = state as {
+    sandboxName?: unknown;
+    sandboxId?: unknown;
+  };
+
+  if (hasNonEmptyString(sandboxState.sandboxName)) {
+    return sandboxState.sandboxName;
+  }
+
+  if (hasNonEmptyString(sandboxState.sandboxId)) {
+    return sandboxState.sandboxId;
+  }
+
+  return undefined;
+}
+
+function getExpiresAt(state: SandboxState): number | undefined {
+  return "expiresAt" in state && typeof state.expiresAt === "number"
+    ? state.expiresAt
+    : undefined;
+}
+
+export function getPersistentSandboxName(
+  state: SandboxState | null | undefined,
+): string | undefined {
+  return getSandboxNameFromUnknown(state);
+}
+
 /**
  * Type guard to check if a sandbox is active and ready to accept operations.
  */
@@ -13,17 +46,22 @@ export function isSandboxActive(
 ): state is SandboxState {
   if (!state) return false;
 
-  if ("expiresAt" in state && state.expiresAt !== undefined) {
-    if (Date.now() >= state.expiresAt - SANDBOX_EXPIRES_BUFFER_MS) {
+  if (!hasRuntimeState(state)) {
+    return false;
+  }
+
+  const expiresAt = getExpiresAt(state);
+  if (expiresAt !== undefined) {
+    if (Date.now() >= expiresAt - SANDBOX_EXPIRES_BUFFER_MS) {
       return false;
     }
   }
 
-  return hasRuntimeState(state);
+  return true;
 }
 
 /**
- * Check if we can perform operations on a sandbox (snapshot, stop, etc.).
+ * Check if we can perform operations on a currently running sandbox (stop, extend, etc.).
  */
 export function canOperateOnSandbox(
   state: SandboxState | null | undefined,
@@ -33,16 +71,27 @@ export function canOperateOnSandbox(
 }
 
 /**
+ * Check if a session has a resumable persistent sandbox identity saved.
+ */
+export function hasResumableSandboxState(
+  state: SandboxState | null | undefined,
+): boolean {
+  return getPersistentSandboxName(state) !== undefined;
+}
+
+/**
  * Check if an unknown value represents sandbox state with runtime data.
  */
 export function hasRuntimeSandboxState(state: unknown): boolean {
   if (!state || typeof state !== "object") return false;
 
-  const sandboxState = state as {
-    sandboxId?: unknown;
-  };
+  const sandboxName = getSandboxNameFromUnknown(state);
+  if (!sandboxName) {
+    return false;
+  }
 
-  return hasNonEmptyString(sandboxState.sandboxId);
+  const expiresAt = (state as { expiresAt?: unknown }).expiresAt;
+  return typeof expiresAt === "number";
 }
 
 /**
@@ -61,16 +110,23 @@ export function isSandboxUnavailableError(message: string): boolean {
 }
 
 function hasRuntimeState(state: SandboxState): boolean {
-  return "sandboxId" in state && hasNonEmptyString(state.sandboxId);
+  return (
+    getPersistentSandboxName(state) !== undefined &&
+    getExpiresAt(state) !== undefined
+  );
 }
 
 /**
- * Clear sandbox runtime state while preserving the type for future restoration.
+ * Clear transient runtime state while preserving any durable persistent sandbox identity.
  */
 export function clearSandboxState(
   state: SandboxState | null | undefined,
 ): SandboxState | null {
   if (!state) return null;
 
-  return { type: state.type } as SandboxState;
+  const sandboxName = getPersistentSandboxName(state);
+  return {
+    type: state.type,
+    ...(sandboxName ? { sandboxName } : {}),
+  } as SandboxState;
 }

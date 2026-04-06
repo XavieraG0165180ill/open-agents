@@ -16,7 +16,7 @@ export type SandboxState = { type: "vercel" } & VercelState;
  * Base connect options for all sandbox types.
  */
 export interface ConnectOptions {
-  /** Environment variables (e.g., GITHUB_TOKEN) */
+  /** Environment variables (e.g. GITHUB_TOKEN) */
   env?: Record<string, string>;
   /** Git user for commits */
   gitUser?: { name: string; email: string };
@@ -32,6 +32,10 @@ export interface ConnectOptions {
    * Skip git init in an empty workspace (e.g. when refreshing a Vercel base snapshot).
    */
   skipGitWorkspaceBootstrap?: boolean;
+  /** Resume a stopped persistent sandbox session */
+  resume?: boolean;
+  /** Whether the created sandbox should persist across stops */
+  persistent?: boolean;
 }
 
 /**

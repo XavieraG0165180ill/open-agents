@@ -28,12 +28,19 @@ interface KickCall {
 interface ConnectConfig {
   state: {
     type: "vercel";
-    sandboxId?: string;
+    sandboxName?: string;
+    source?: {
+      repo: string;
+      branch?: string;
+      newBranch?: string;
+      token?: string;
+    };
   };
   options?: {
     gitUser?: {
       email?: string;
     };
+    resume?: boolean;
   };
 }
 
@@ -52,6 +59,7 @@ let sessionRecord: TestSessionRecord;
 let currentVercelAuthInfo: TestVercelAuthInfo | null;
 let currentDotenvContent: string;
 let currentDotenvError: Error | null;
+let currentExistingSandboxFound = false;
 
 mock.module("@/lib/session/get-server-session", () => ({
   getServerSession: async () => ({
@@ -117,12 +125,16 @@ mock.module("@open-harness/sandbox", () => ({
   connectSandbox: async (config: ConnectConfig) => {
     connectConfigs.push(config);
 
+    if (config.options?.resume && !currentExistingSandboxFound) {
+      throw new Error("sandbox not found");
+    }
+
     return {
       currentBranch: "main",
       workingDirectory: "/vercel/sandbox",
       getState: () => ({
         type: "vercel" as const,
-        sandboxId: config.state.sandboxId ?? "sbx-vercel-1",
+        sandboxName: config.state.sandboxName ?? "session_session-1",
         expiresAt: Date.now() + 120_000,
       }),
       exec: async (command: string, cwd: string, timeoutMs: number) => {
@@ -170,6 +182,7 @@ describe("/api/sandbox lifecycle kicks", () => {
     };
     currentDotenvContent = 'API_KEY="secret"\n';
     currentDotenvError = null;
+    currentExistingSandboxFound = false;
     sessionRecord = {
       id: "session-1",
       userId: "user-1",
@@ -182,15 +195,16 @@ describe("/api/sandbox lifecycle kicks", () => {
     };
   });
 
-  test("reconnect branch uses vercel sandbox and does not resync .env.local", async () => {
+  test("reuses an existing named sandbox without resyncing .env.local", async () => {
     const { POST } = await routeModulePromise;
+
+    currentExistingSandboxFound = true;
 
     const request = new Request("http://localhost/api/sandbox", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionId: "session-1",
-        sandboxId: "sbx-existing-1",
       }),
     });
 
@@ -203,9 +217,15 @@ describe("/api/sandbox lifecycle kicks", () => {
         reason: "sandbox-created",
       },
     ]);
-    expect(connectConfigs[0]?.state).toEqual({
-      type: "vercel",
-      sandboxId: "sbx-existing-1",
+    expect(connectConfigs).toHaveLength(1);
+    expect(connectConfigs[0]).toMatchObject({
+      state: {
+        type: "vercel",
+        sandboxName: "session_session-1",
+      },
+      options: {
+        resume: true,
+      },
     });
     expect(dotenvSyncCalls).toHaveLength(0);
     expect(
@@ -247,9 +267,15 @@ describe("/api/sandbox lifecycle kicks", () => {
       },
     ]);
     expect(updateCalls.length).toBeGreaterThan(0);
-    expect(connectConfigs[0]?.options?.gitUser?.email).toBe(
+    expect(connectConfigs).toHaveLength(2);
+    expect(connectConfigs[0]).toMatchObject({
+      state: { type: "vercel", sandboxName: "session_session-1" },
+      options: { resume: true },
+    });
+    expect(connectConfigs[1]?.options?.gitUser?.email).toBe(
       "12345+nico-gh@users.noreply.github.com",
     );
+    expect(connectConfigs[1]?.state.sandboxName).toBe("session_session-1");
     expect(dotenvSyncCalls).toEqual([
       {
         token: "vercel-token",

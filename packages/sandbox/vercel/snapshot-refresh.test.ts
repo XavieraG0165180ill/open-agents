@@ -83,6 +83,7 @@ describe("refreshBaseSnapshot", () => {
           baseSnapshotId: "snap-current",
           timeout: 300_000,
           skipGitWorkspaceBootstrap: true,
+          persistent: false,
           ports: [3000, 5173],
         },
       },

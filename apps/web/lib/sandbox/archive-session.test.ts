@@ -15,6 +15,8 @@ interface TestSessionRecord {
   sandboxState: {
     type: "vercel";
     sandboxId?: string;
+    sandboxName?: string;
+    expiresAt?: number;
   } | null;
   snapshotUrl: string | null;
   lifecycleState: "active" | "archived" | null;
@@ -157,6 +159,7 @@ function makeSessionRecord(
     sandboxState: {
       type: "vercel",
       sandboxId: "sandbox-1",
+      expiresAt: Date.now() + 120_000,
     },
     snapshotUrl: null,
     lifecycleState: "active",
@@ -226,10 +229,16 @@ describe("archiveSession", () => {
       sandboxExpiresAt: null,
       hibernateAfter: null,
       lifecycleError: "Archive finalization failed: sandbox connection failed",
-      sandboxState: { type: "vercel" },
+      sandboxState: {
+        type: "vercel",
+        sandboxName: "sandbox-1",
+      },
     });
 
-    expect(sessionRecord?.sandboxState).toEqual({ type: "vercel" });
+    expect(sessionRecord?.sandboxState).toEqual({
+      type: "vercel",
+      sandboxName: "sandbox-1",
+    });
   });
 
   test("preserves runtime sandbox state when archive finalization fails but snapshot already exists", async () => {
@@ -263,10 +272,12 @@ describe("archiveSession", () => {
       "Archive finalization failed: sandbox connection failed",
     );
     expect(recoveryPatch?.sandboxState).toBeUndefined();
-    expect(sessionRecord?.sandboxState).toEqual({
-      type: "vercel",
-      sandboxId: "sandbox-1",
-    });
+    expect(sessionRecord?.sandboxState).toEqual(
+      expect.objectContaining({
+        type: "vercel",
+        sandboxId: "sandbox-1",
+      }),
+    );
   });
 
   test("refreshes merged PR status before archiving", async () => {

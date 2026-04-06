@@ -9,7 +9,10 @@ import {
   getSandboxExpiresAtDate,
 } from "@/lib/sandbox/lifecycle";
 import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
-import { hasRuntimeSandboxState } from "@/lib/sandbox/utils";
+import {
+  hasResumableSandboxState,
+  hasRuntimeSandboxState,
+} from "@/lib/sandbox/utils";
 
 export type SandboxStatusResponse = {
   status: "active" | "no_sandbox";
@@ -88,7 +91,9 @@ export async function GET(req: Request): Promise<Response> {
 
   return Response.json({
     status: isActive ? "active" : "no_sandbox",
-    hasSnapshot: !!effectiveSessionRecord.snapshotUrl,
+    hasSnapshot:
+      hasResumableSandboxState(effectiveSessionRecord.sandboxState) ||
+      Boolean(effectiveSessionRecord.snapshotUrl),
     lifecycleVersion: effectiveSessionRecord.lifecycleVersion,
     lifecycle: {
       serverTime: Date.now(),

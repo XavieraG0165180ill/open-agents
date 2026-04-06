@@ -478,7 +478,7 @@ function SandboxInputOverlay({
           <Archive className="h-4 w-4" />
           <span className="text-sm">
             {snapshotPending
-              ? "Snapshot in progress. Unarchive will be available in a few seconds."
+              ? "Pause in progress. Unarchive will be available in a few seconds."
               : "This session is archived. Unarchive it to resume."}
           </span>
         </div>
@@ -1788,9 +1788,8 @@ export function SessionChatContent({
     setRestoreError(null);
 
     try {
-      // Restore from snapshot directly - this creates a new sandbox from the snapshot
-      // Do NOT create a sandbox first, as that would set sandboxId which prevents
-      // the snapshot restoration from working correctly
+      // Resume the saved sandbox directly. For legacy sessions this lazily migrates
+      // the stored snapshot into the named persistent sandbox on first resume.
       const response = await fetch("/api/sandbox/snapshot", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -1822,7 +1821,7 @@ export function SessionChatContent({
         }
 
         shouldRefreshRestoredWorkspaceRef.current = false;
-        setRestoreError(`Snapshot restore failed: ${errorMsg}`);
+        setRestoreError(`Resume sandbox failed: ${errorMsg}`);
         return;
       }
 
@@ -1845,13 +1844,13 @@ export function SessionChatContent({
       const reconnected = await waitForSandboxReady();
       if (!reconnected) {
         setRestoreError(
-          "Snapshot restored, but reconnect did not complete yet. Try Resume sandbox again.",
+          "Sandbox resumed, but reconnect did not complete yet. Try Resume sandbox again.",
         );
       }
     } catch (err) {
       shouldRefreshRestoredWorkspaceRef.current = false;
       const errorMsg = err instanceof Error ? err.message : String(err);
-      setRestoreError(`Failed to restore snapshot: ${errorMsg}`);
+      setRestoreError(`Failed to resume sandbox: ${errorMsg}`);
     } finally {
       setIsRestoringSnapshot(false);
     }
@@ -2002,8 +2001,6 @@ export function SessionChatContent({
 
   // Track whether we've auto-attempted sandbox startup for this page load.
   const hasAutoStartedSandboxRef = useRef(false);
-  const hasAutoRestoredSnapshotRef = useRef(false);
-  const shouldAutoResumeOnEntryRef = useRef(true);
   const shouldRefreshRestoredWorkspaceRef = useRef(false);
 
   const isArchived = session.status === "archived";
@@ -2025,7 +2022,7 @@ export function SessionChatContent({
   }, [sandboxInfo, reconnectionStatus, refreshWorkspaceAfterRestore]);
 
   // Attempt a single reconnect probe on entry to pick up authoritative server state
-  // (connected sandbox, no sandbox, and snapshot availability).
+  // (connected sandbox, no sandbox, and whether a saved sandbox can be resumed).
   // Skip for archived sessions -- they should never spin up a sandbox.
   useEffect(() => {
     if (isArchived) return;
@@ -2047,42 +2044,6 @@ export function SessionChatContent({
   ]);
 
   // Auto-resume is only for entering an already-paused session.
-  // Once this tab has had an active connection, do not auto-resume again.
-  useEffect(() => {
-    if (sandboxInfo || reconnectionStatus === "connected") {
-      shouldAutoResumeOnEntryRef.current = false;
-    }
-  }, [sandboxInfo, reconnectionStatus]);
-
-  // Auto-resume paused sessions on entry once we know there is no active runtime sandbox.
-  // Skip for archived sessions.
-  useEffect(() => {
-    if (isArchived) return;
-    if (!hasSnapshot) {
-      hasAutoRestoredSnapshotRef.current = false;
-      return;
-    }
-    if (!shouldAutoResumeOnEntryRef.current) return;
-    if (sandboxInfo || isCreatingSandbox || isRestoringSnapshot) return;
-    if (reconnectionStatus === "checking") return;
-    if (hasRuntimeSandboxState && reconnectionStatus !== "no_sandbox") return;
-    if (hasAutoRestoredSnapshotRef.current) return;
-
-    hasAutoRestoredSnapshotRef.current = true;
-    shouldAutoResumeOnEntryRef.current = false;
-    void handleRestoreSnapshot();
-  }, [
-    isArchived,
-    session.id,
-    hasSnapshot,
-    sandboxInfo,
-    isCreatingSandbox,
-    isRestoringSnapshot,
-    hasRuntimeSandboxState,
-    reconnectionStatus,
-    handleRestoreSnapshot,
-  ]);
-
   // Server-authoritative lifecycle state: lightweight status poll every 15s.
   useEffect(() => {
     if (isCreatingSandbox || isRestoringSnapshot) return;
@@ -2171,7 +2132,7 @@ export function SessionChatContent({
       return;
     }
 
-    // Snapshotted sessions are resumed by the auto-restore-on-entry effect.
+    // Sessions with a saved sandbox should wait for an explicit Resume action.
     if (hasSnapshot) {
       return;
     }
@@ -2336,8 +2297,7 @@ export function SessionChatContent({
     !isRestoringSnapshot;
   const isHibernatingTransition =
     isReconnectingSandbox && hasSnapshot && !hasRuntimeSandboxState;
-  const isArchiveSnapshotPending =
-    isArchived && !hasSnapshot && hasRuntimeSandboxState;
+  const isArchiveSnapshotPending = isArchived && hasRuntimeSandboxState;
   const isServerHibernating = lifecycleTiming.state === "hibernating";
   const isServerRestoring = lifecycleTiming.state === "restoring";
   const isServerHibernated = lifecycleTiming.state === "hibernated";

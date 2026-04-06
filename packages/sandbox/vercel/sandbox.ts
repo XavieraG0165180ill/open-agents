@@ -23,6 +23,36 @@ interface SandboxRouteLike {
   port: number;
 }
 
+type VercelSdkSandboxLike = VercelSandboxSDK & {
+  name?: string;
+  sandboxId?: string;
+  status?: string;
+  timeout?: number;
+  routes?: SandboxRouteLike[];
+};
+
+function getSdkSandboxIdentifier(sdk: VercelSdkSandboxLike): string {
+  if (typeof sdk.name === "string" && sdk.name.length > 0) {
+    return sdk.name;
+  }
+
+  if (typeof sdk.sandboxId === "string" && sdk.sandboxId.length > 0) {
+    return sdk.sandboxId;
+  }
+
+  throw new Error("Sandbox identifier is missing from the Vercel SDK response");
+}
+
+function getSdkSandboxStatus(sdk: VercelSdkSandboxLike): string | undefined {
+  return typeof sdk.status === "string" ? sdk.status : undefined;
+}
+
+function getSdkTimeoutMs(sdk: VercelSdkSandboxLike): number | undefined {
+  return typeof sdk.timeout === "number" && Number.isFinite(sdk.timeout)
+    ? sdk.timeout
+    : undefined;
+}
+
 function buildAuthenticatedGitHubUrl(
   repoUrl: string,
   token: string,
@@ -46,10 +76,11 @@ function buildAuthenticatedGitHubUrl(
 export class VercelSandbox implements Sandbox {
   readonly type = "cloud" as const;
   /**
-   * Unique identifier for this sandbox.
-   * Use this to reconnect to an existing sandbox via `connectVercelSandbox({ sandboxId })`.
+   * Stable identifier for this sandbox.
+   * For persistent sandboxes this is the durable sandbox name.
    */
   readonly id: string;
+  readonly name: string;
   readonly workingDirectory: string;
   readonly env?: Record<string, string>;
   /**
@@ -59,7 +90,7 @@ export class VercelSandbox implements Sandbox {
   readonly currentBranch?: string;
   readonly hooks?: SandboxHooks;
 
-  private sdk: VercelSandboxSDK;
+  private sdk: VercelSdkSandboxLike;
   private timeoutTimer?: ReturnType<typeof setTimeout>;
   private isStopped = false;
   private _expiresAt?: number;
@@ -84,7 +115,7 @@ export class VercelSandbox implements Sandbox {
   }
 
   private constructor(
-    sdk: VercelSandboxSDK,
+    sdk: VercelSdkSandboxLike,
     id: string,
     workingDirectory: string,
     env?: Record<string, string>,
@@ -96,6 +127,7 @@ export class VercelSandbox implements Sandbox {
   ) {
     this.sdk = sdk;
     this.id = id;
+    this.name = id;
     this.workingDirectory = workingDirectory;
     this.env = env;
     this.currentBranch = currentBranch;
@@ -260,7 +292,7 @@ export class VercelSandbox implements Sandbox {
         ? "\n- Runtime env vars for dev server URLs are injected into commands: SANDBOX_HOST and SANDBOX_URL_<PORT> (for routable ports)"
         : "";
 
-    return `- Sandbox VMs are temporary, but the sandbox can be hibernated and later restored from a snapshot when it is spun down
+    return `- Sandbox VMs run inside persistent sandboxes: stopping the current session preserves the filesystem, and resuming starts a new session from the last saved state
 - All bash commands already run in the working directory by default — never prepend \`cd <working-directory> &&\`; just run the command directly
 - Do NOT prefix any bash command with a \`cd\` to the working directory — commands like \`cd <working-directory> && npm test\` are WRONG; just use \`npm test\`
 - Use workspace-relative paths for read/write/search/edit operations
@@ -338,9 +370,11 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     config: VercelSandboxConfig = {},
   ): Promise<VercelSandbox> {
     const {
+      name,
       source,
       gitUser,
       env,
+      persistent = true,
       vcpus = 4,
       timeout = 300_000,
       runtime = "node22",
@@ -362,13 +396,15 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     const sdkTimeout = effectiveTimeout + TIMEOUT_BUFFER_MS;
 
     const createBaseConfig = {
+      ...(name ? { name } : {}),
+      persistent,
       resources: { vcpus },
       timeout: sdkTimeout,
       runtime,
       ...(ports && { ports }),
     };
 
-    let sdk: VercelSandboxSDK;
+    let sdk: VercelSdkSandboxLike;
     if (baseSnapshotId) {
       sdk = await VercelSandboxSDK.create({
         ...createBaseConfig,
@@ -504,7 +540,7 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
 
     const sandbox = new VercelSandbox(
       sdk,
-      sdk.sandboxId,
+      getSdkSandboxIdentifier(sdk),
       workingDirectory,
       env,
       currentBranch,
@@ -523,35 +559,43 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
   }
 
   /**
-   * Connect to an existing Vercel Sandbox by ID.
+   * Connect to an existing named Vercel sandbox.
    */
   static async connect(
-    sandboxId: string,
+    sandboxName: string,
     options: {
       env?: Record<string, string>;
       hooks?: SandboxHooks;
       /**
        * Remaining timeout in ms for this sandbox.
-       * If not provided, defaults to DEFAULT_RECONNECT_TIMEOUT_MS (5 minutes).
-       * This ensures timeout tracking and proactive stop work correctly.
+       * If not provided, we fall back to the SDK-reported timeout or a conservative default.
        */
       remainingTimeout?: number;
       /** Ports that were declared at creation time (for preview URL display) */
       ports?: number[];
+      /** Resume the sandbox if it is currently stopped */
+      resume?: boolean;
     } = {},
   ): Promise<VercelSandbox> {
-    const sdk = await VercelSandboxSDK.get({ sandboxId });
+    const sdk = (await VercelSandboxSDK.get({
+      name: sandboxName,
+      ...(options.resume ? { resume: true } : {}),
+    })) as VercelSdkSandboxLike;
 
-    // Use provided remainingTimeout or default to DEFAULT_RECONNECT_TIMEOUT_MS
-    // This ensures timeout tracking is always enabled for reconnected sandboxes,
-    // allowing beforeStop and onTimeout hooks to fire properly.
+    const sdkStatus = getSdkSandboxStatus(sdk);
+    if (sdkStatus === "stopped" && !options.resume) {
+      throw new Error("Sandbox is stopped");
+    }
+
     const remainingTimeout =
-      options.remainingTimeout ?? DEFAULT_RECONNECT_TIMEOUT_MS;
+      options.remainingTimeout ??
+      getSdkTimeoutMs(sdk) ??
+      DEFAULT_RECONNECT_TIMEOUT_MS;
     const startTime = Date.now();
 
     const sandbox = new VercelSandbox(
       sdk,
-      sandboxId,
+      getSdkSandboxIdentifier(sdk),
       DEFAULT_WORKING_DIRECTORY,
       options.env,
       undefined,
@@ -883,8 +927,8 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
   getState(): { type: "vercel" } & VercelState {
     return {
       type: "vercel",
-      sandboxId: this.id,
-      expiresAt: this.expiresAt,
+      sandboxName: this.name,
+      ...(this.expiresAt !== undefined ? { expiresAt: this.expiresAt } : {}),
     };
   }
 }
@@ -941,11 +985,13 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
 export async function connectVercelSandbox(
   config: VercelSandboxConfig | VercelSandboxConnectConfig = {},
 ): Promise<VercelSandbox> {
-  if ("sandboxId" in config) {
-    return VercelSandbox.connect(config.sandboxId, {
+  if ("sandboxName" in config) {
+    return VercelSandbox.connect(config.sandboxName, {
       env: config.env,
       hooks: config.hooks,
       remainingTimeout: config.remainingTimeout,
+      ports: config.ports,
+      resume: config.resume,
     });
   }
   return VercelSandbox.create(config);

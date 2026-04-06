@@ -2,6 +2,11 @@ import type { SandboxHooks } from "../interface";
 
 export interface VercelSandboxConfig {
   /**
+   * Optional stable persistent sandbox name.
+   * For session sandboxes this should be deterministic (for example `session_<sessionId>`).
+   */
+  name?: string;
+  /**
    * Optional GitHub repository source to clone into the sandbox.
    * If not provided, the sandbox starts empty.
    */
@@ -33,6 +38,11 @@ export interface VercelSandboxConfig {
    * Useful for API keys, tokens, and other secrets.
    */
   env?: Record<string, string>;
+  /**
+   * Whether the sandbox should persist automatically across stops.
+   * @default true
+   */
+  persistent?: boolean;
   /**
    * Number of vCPUs (1-8). Each vCPU provides 2048 MB of memory.
    * @default 4
@@ -75,17 +85,19 @@ export interface VercelSandboxConfig {
  * Configuration for reconnecting to an existing sandbox.
  */
 export interface VercelSandboxConnectConfig {
-  /** The sandbox ID to reconnect to */
-  sandboxId: string;
+  /** The persistent sandbox name to reconnect to */
+  sandboxName: string;
+  /** Resume the sandbox if it is currently stopped */
+  resume?: boolean;
   /** Environment variables to make available to commands */
   env?: Record<string, string>;
   /** Lifecycle hooks for setup and teardown */
   hooks?: SandboxHooks;
   /**
-   * Remaining timeout in milliseconds for this sandbox.
-   * If not provided, defaults to 5 minutes (DEFAULT_RECONNECT_TIMEOUT_MS).
-   * This ensures proactive stop and hooks (beforeStop, onTimeout) work correctly.
-   * Provide an explicit value if you know the exact remaining time.
+   * Remaining timeout in milliseconds for this sandbox session.
+   * If not provided, we fall back to the SDK-reported timeout or a conservative default.
    */
   remainingTimeout?: number;
+  /** Ports that were declared at creation time (for preview URL display) */
+  ports?: number[];
 }

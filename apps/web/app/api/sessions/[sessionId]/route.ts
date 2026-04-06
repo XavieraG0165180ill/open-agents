@@ -81,7 +81,7 @@ export async function PATCH(
     return Response.json(
       {
         error:
-          "Snapshot is still being created for this archived session. Please try unarchiving again in a few seconds.",
+          "This archived session is still being paused. Please try unarchiving again in a few seconds.",
       },
       { status: 409 },
     );

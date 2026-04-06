@@ -7,7 +7,11 @@ import {
   getPullRequestStatus,
 } from "@/lib/github/client";
 import { getRepoToken } from "@/lib/github/get-repo-token";
-import { canOperateOnSandbox, clearSandboxState } from "./utils";
+import {
+  canOperateOnSandbox,
+  clearSandboxState,
+  isSandboxUnavailableError,
+} from "./utils";
 
 type SessionRecord = NonNullable<Awaited<ReturnType<typeof getSessionById>>>;
 type SessionUpdateInput = Parameters<typeof updateSession>[1];
@@ -160,35 +164,31 @@ async function finalizeArchivedSessionSandbox(
       return;
     }
 
-    const sandbox = await connectSandbox(archivedSession.sandboxState);
-
-    // Snapshot before stopping so the sandbox can be restored on unarchive.
-    // snapshot() automatically stops the sandbox, so no separate stop() needed.
-    let snapshotFields: {
-      snapshotUrl?: string;
-      snapshotCreatedAt?: Date;
-    } = {};
-
-    if (sandbox.snapshot) {
-      try {
-        const result = await sandbox.snapshot();
-        snapshotFields = {
-          snapshotUrl: result.snapshotId,
-          snapshotCreatedAt: new Date(),
-        };
-      } catch (snapshotError) {
-        console.error(
-          `${logPrefix} Snapshot failed for session ${sessionId}, falling back to stop:`,
-          snapshotError,
-        );
-        await sandbox.stop();
+    let sandbox: Awaited<ReturnType<typeof connectSandbox>> | null = null;
+    try {
+      sandbox = await connectSandbox(archivedSession.sandboxState);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isSandboxUnavailableError(message)) {
+        throw error;
       }
-    } else {
-      await sandbox.stop();
+    }
+
+    if (sandbox) {
+      try {
+        await sandbox.stop();
+      } catch (stopError) {
+        const message =
+          stopError instanceof Error ? stopError.message : String(stopError);
+        if (!isSandboxUnavailableError(message)) {
+          throw stopError;
+        }
+      }
     }
 
     await updateSession(sessionId, {
-      ...snapshotFields,
+      snapshotUrl: null,
+      snapshotCreatedAt: null,
       sandboxState: clearSandboxState(archivedSession.sandboxState),
       lifecycleState: "archived",
       sandboxExpiresAt: null,

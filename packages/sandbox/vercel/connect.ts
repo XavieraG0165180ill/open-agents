@@ -1,8 +1,6 @@
-import { Sandbox as VercelSandboxSDK } from "@vercel/sandbox";
 import type { Sandbox, SandboxHooks } from "../interface";
 import { VercelSandbox } from "./sandbox";
 import type { VercelState } from "./state";
-import { configureGitUser } from "./utils";
 
 interface ConnectOptions {
   env?: Record<string, string>;
@@ -12,6 +10,8 @@ interface ConnectOptions {
   ports?: number[];
   baseSnapshotId?: string;
   skipGitWorkspaceBootstrap?: boolean;
+  resume?: boolean;
+  persistent?: boolean;
 }
 
 function getRemainingTimeout(
@@ -25,61 +25,56 @@ function getRemainingTimeout(
   return remaining > 10_000 ? remaining : undefined;
 }
 
+function getSandboxName(state: VercelState): string | undefined {
+  return state.sandboxName ?? state.sandboxId;
+}
+
 /**
  * Connect to the Vercel-backed cloud sandbox based on the provided state.
  *
- * - If `sandboxId` is present, reconnects to an existing running VM
- * - If `snapshotId` is present (without sandboxId), restores from native snapshot
- * - If `source` is present, creates a new VM and prepares the repo
+ * - If `snapshotId` is present, creates a new named persistent sandbox from that legacy snapshot
+ * - If `sandboxName` is present, reconnects to the named sandbox (optionally resuming it)
+ * - If `source` is present, creates a new named sandbox and prepares the repo
  * - Otherwise, creates an empty sandbox
  */
 export async function connectVercel(
   state: VercelState,
   options?: ConnectOptions,
 ): Promise<Sandbox> {
-  // Reconnect to existing VM
-  if (state.sandboxId) {
-    const remainingTimeout = getRemainingTimeout(state.expiresAt);
+  const sandboxName = getSandboxName(state);
 
-    const connectManagedSandbox = () =>
-      VercelSandbox.connect(state.sandboxId as string, {
-        env: options?.env,
-        hooks: options?.hooks,
-        remainingTimeout,
-        ports: options?.ports,
-      });
-
-    return connectManagedSandbox();
-  }
-
-  // Restore from snapshot (VM timed out, need to spin up new one)
+  // Legacy snapshot restore/migration
   if (state.snapshotId) {
-    const sdk = await VercelSandboxSDK.create({
-      source: { type: "snapshot", snapshotId: state.snapshotId },
+    return VercelSandbox.create({
+      ...(sandboxName ? { name: sandboxName } : {}),
+      env: options?.env,
+      gitUser: options?.gitUser,
+      hooks: options?.hooks,
       ...(options?.timeout !== undefined && { timeout: options.timeout }),
       ...(options?.ports && { ports: options.ports }),
+      baseSnapshotId: state.snapshotId,
+      persistent: options?.persistent ?? true,
     });
+  }
 
-    // Wrap in VercelSandbox - use connect since SDK is already created
-    // Pass remainingTimeout so timeout tracking works correctly
-    const sandbox = await VercelSandbox.connect(sdk.sandboxId, {
+  // Reconnect/resume named persistent sandbox
+  if (sandboxName) {
+    const remainingTimeout =
+      getRemainingTimeout(state.expiresAt) ?? options?.timeout;
+
+    return VercelSandbox.connect(sandboxName, {
       env: options?.env,
       hooks: options?.hooks,
-      remainingTimeout: options?.timeout,
+      remainingTimeout,
       ports: options?.ports,
+      resume: options?.resume,
     });
-
-    // Configure git user if provided (not done automatically when restoring from snapshot)
-    if (options?.gitUser) {
-      await configureGitUser(sandbox, options.gitUser);
-    }
-
-    return sandbox;
   }
 
   // Create from source
   if (state.source) {
     return VercelSandbox.create({
+      ...(sandboxName ? { name: sandboxName } : {}),
       source: {
         url: state.source.repo,
         branch: state.source.branch,
@@ -97,11 +92,13 @@ export async function connectVercel(
       ...(options?.skipGitWorkspaceBootstrap && {
         skipGitWorkspaceBootstrap: true,
       }),
+      persistent: options?.persistent ?? true,
     });
   }
 
   // Create empty sandbox
   return VercelSandbox.create({
+    ...(sandboxName ? { name: sandboxName } : {}),
     env: options?.env,
     gitUser: options?.gitUser,
     hooks: options?.hooks,
@@ -113,5 +110,6 @@ export async function connectVercel(
     ...(options?.skipGitWorkspaceBootstrap && {
       skipGitWorkspaceBootstrap: true,
     }),
+    persistent: options?.persistent ?? true,
   });
 }
