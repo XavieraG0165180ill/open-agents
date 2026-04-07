@@ -1,68 +1,475 @@
-import { CheckCircle2, Clock3, ExternalLink, XCircle } from "lucide-react";
-import type { PullRequestCheckRun } from "@/lib/github/client";
+"use client";
 
-function getCheckStateLabel(state: "passed" | "pending" | "failed"): string {
-  return state === "passed"
-    ? "Passed"
-    : state === "pending"
-      ? "Pending"
-      : "Failing";
+import { useEffect, useRef, useState, useMemo } from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  List,
+  ArrowUpDown,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  X,
+} from "lucide-react";
+import type {
+  PullRequestCheckRun,
+  PullRequestCheckState,
+} from "@/lib/github/client";
+import { cn } from "@/lib/utils";
+
+/* ------------------------------------------------------------------ */
+/*  Types & constants                                                  */
+/* ------------------------------------------------------------------ */
+
+type GroupMode = "status" | "flat";
+
+const stateOrder: Record<PullRequestCheckState, number> = {
+  failed: 0,
+  pending: 1,
+  passed: 2,
+};
+
+function groupLabel(state: PullRequestCheckState, count: number): string {
+  const s = count === 1 ? "" : "s";
+  switch (state) {
+    case "failed":
+      return `${count} failing check${s}`;
+    case "pending":
+      return `${count} pending check${s}`;
+    case "passed":
+      return `${count} passing check${s}`;
+  }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Header status icon                                                 */
+/*  - All passed  → solid green circle with white check                */
+/*  - All failed  → solid red circle with white X                      */
+/*  - Mixed/split → outline pie-chart–style ring with breakdown        */
+/* ------------------------------------------------------------------ */
+
+function HeaderStatusIcon({
+  passed,
+  failed,
+  pending,
+  total,
+}: {
+  passed: number;
+  failed: number;
+  pending: number;
+  total: number;
+}) {
+  if (failed === 0 && pending === 0) {
+    // All passing — solid green circle, white check
+    return (
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 dark:bg-emerald-500">
+        <Check className="h-3 w-3 text-white" strokeWidth={3} />
+      </span>
+    );
+  }
+
+  if (passed === 0 && pending === 0) {
+    // All failing — solid red circle, white X
+    return (
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-destructive">
+        <X className="h-3 w-3 text-white" strokeWidth={3} />
+      </span>
+    );
+  }
+
+  // Mixed — SVG pie/ring chart
+  const radius = 8;
+  const circumference = 2 * Math.PI * radius;
+  const segments = [
+    { count: failed, color: "var(--color-destructive, #ef4444)" },
+    { count: pending, color: "var(--color-amber-500, #f59e0b)" },
+    { count: passed, color: "var(--color-emerald-500, #10b981)" },
+  ];
+
+  let offset = 0;
+  const arcs = segments
+    .filter((s) => s.count > 0)
+    .map((s) => {
+      const length = (s.count / total) * circumference;
+      const arc = { ...s, length, offset };
+      offset += length;
+      return arc;
+    });
+
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 20 20"
+      className="shrink-0"
+      aria-hidden
+    >
+      {arcs.map((arc, i) => (
+        <circle
+          key={i}
+          cx="10"
+          cy="10"
+          r={radius}
+          fill="none"
+          stroke={arc.color}
+          strokeWidth="3"
+          strokeDasharray={`${arc.length} ${circumference - arc.length}`}
+          strokeDashoffset={-arc.offset}
+          transform="rotate(-90 10 10)"
+        />
+      ))}
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Individual check row icon                                          */
+/*  - passed  → simple check (✓)                                       */
+/*  - failed  → simple X                                               */
+/*  - pending → spinner                                                */
+/* ------------------------------------------------------------------ */
+
+function CheckStateIcon({
+  state,
+  className,
+}: {
+  state: PullRequestCheckState;
+  className?: string;
+}) {
+  if (state === "passed") {
+    return (
+      <Check
+        className={cn(
+          "h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-500",
+          className,
+        )}
+        strokeWidth={2.5}
+      />
+    );
+  }
+  if (state === "pending") {
+    return (
+      <Loader2
+        className={cn(
+          "h-4 w-4 shrink-0 animate-spin text-amber-600 dark:text-amber-500",
+          className,
+        )}
+      />
+    );
+  }
+  return (
+    <X
+      className={cn("h-4 w-4 shrink-0 text-destructive", className)}
+      strokeWidth={2.5}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Single check row                                                   */
+/* ------------------------------------------------------------------ */
+
+function CheckRunRow({ checkRun }: { checkRun: PullRequestCheckRun }) {
+  const inner = (
+    <div className="flex min-w-0 items-center gap-2 py-0.5">
+      <CheckStateIcon state={checkRun.state} />
+      <span
+        className={cn(
+          "truncate text-sm text-foreground",
+          checkRun.detailsUrl &&
+            "group-hover/check:underline group-hover/check:underline-offset-2",
+        )}
+      >
+        {checkRun.name}
+      </span>
+    </div>
+  );
+
+  if (checkRun.detailsUrl) {
+    return (
+      /* oxlint-disable-next-line nextjs/no-html-link-for-pages */
+      <a
+        href={checkRun.detailsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="group/check block"
+        aria-label={`Open details for ${checkRun.name}`}
+      >
+        {inner}
+      </a>
+    );
+  }
+
+  return inner;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Collapsible group accordion                                        */
+/* ------------------------------------------------------------------ */
+
+function GroupSection({
+  state,
+  checkRuns,
+  defaultOpen,
+}: {
+  state: PullRequestCheckState;
+  checkRuns: PullRequestCheckRun[];
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0" />
+        )}
+        <span>{groupLabel(state, checkRuns.length)}</span>
+      </button>
+      {open && (
+        <ul className="ml-4 space-y-0.5">
+          {checkRuns.map((cr, i) => (
+            <li key={`${cr.name}-${cr.detailsUrl ?? "no-url"}-${i}`}>
+              <CheckRunRow checkRun={cr} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
 
 interface CheckRunsListProps {
   checkRuns: PullRequestCheckRun[];
+  checks?: {
+    passed: number;
+    pending: number;
+    failed: number;
+  };
+  /** Called when the user clicks refresh */
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  /** True on initial load before any data arrives */
+  isLoading?: boolean;
+  /** Called when the user clicks "Fix errors" — receives all failing check runs */
+  onFixChecks?: (failedRuns: PullRequestCheckRun[]) => Promise<void> | void;
 }
 
-export function CheckRunsList({ checkRuns }: CheckRunsListProps) {
-  if (checkRuns.length === 0) return null;
+export function CheckRunsList({
+  checkRuns,
+  checks,
+  onRefresh,
+  isRefreshing,
+  isLoading,
+  onFixChecks,
+}: CheckRunsListProps) {
+  const passed =
+    checks?.passed ?? checkRuns.filter((c) => c.state === "passed").length;
+  const pending =
+    checks?.pending ?? checkRuns.filter((c) => c.state === "pending").length;
+  const failed =
+    checks?.failed ?? checkRuns.filter((c) => c.state === "failed").length;
+  const total = passed + pending + failed;
+
+  const allPassing = failed === 0 && pending === 0 && total > 0;
+
+  const [groupMode, setGroupMode] = useState<GroupMode>("status");
+  // Start closed — open once on first data load if not all passing
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const hasReceivedData = useRef(false);
+  useEffect(() => {
+    if (total > 0 && !hasReceivedData.current) {
+      hasReceivedData.current = true;
+      if (!allPassing) {
+        setDetailsOpen(true);
+      }
+    }
+  }, [total, allPassing]);
+
+  // Count distinct states present
+  const distinctStates = useMemo(() => {
+    const s = new Set(checkRuns.map((c) => c.state));
+    return s.size;
+  }, [checkRuns]);
+
+  const showGroupToggle = distinctStates > 1;
+
+  const sorted = useMemo(
+    () =>
+      [...checkRuns].sort((a, b) => stateOrder[a.state] - stateOrder[b.state]),
+    [checkRuns],
+  );
+
+  const grouped = useMemo(() => {
+    const groups: Partial<
+      Record<PullRequestCheckState, PullRequestCheckRun[]>
+    > = {};
+    for (const cr of sorted) {
+      (groups[cr.state] ??= []).push(cr);
+    }
+    return groups;
+  }, [sorted]);
+
+  const groupOrder: PullRequestCheckState[] = ["failed", "pending", "passed"];
+
+  if (checkRuns.length === 0 && !isLoading) return null;
+
+  const showLoading = isLoading && checkRuns.length === 0;
 
   return (
-    <div className="rounded-md border border-border bg-muted/40 p-3">
-      <p className="mb-2 text-sm font-medium text-foreground">Check details</p>
-      <ul className="max-h-40 space-y-1 overflow-y-auto">
-        {checkRuns.map((checkRun, index) => (
-          <li
-            key={`${checkRun.name}-${checkRun.detailsUrl ?? "no-url"}-${index}`}
-            className="flex items-center justify-between gap-2 text-sm"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              {checkRun.state === "passed" ? (
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-500" />
-              ) : checkRun.state === "pending" ? (
-                <Clock3 className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+    <div className="rounded-md border border-border bg-muted/40">
+      {/* ---- Header row ---- */}
+      <div className="flex items-center gap-2.5 p-3">
+        {/* Clickable toggle area — takes up remaining space */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!showLoading) setDetailsOpen(!detailsOpen);
+          }}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2.5",
+            showLoading && "cursor-default",
+          )}
+        >
+          {showLoading ? (
+            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted-foreground" />
+          ) : (
+            <HeaderStatusIcon
+              passed={passed}
+              failed={failed}
+              pending={pending}
+              total={total}
+            />
+          )}
+
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="text-sm font-medium text-foreground">Checks</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {showLoading ? (
+                "Loading..."
               ) : (
-                <XCircle className="h-4 w-4 shrink-0 text-destructive" />
+                <>
+                  {passed} passed
+                  {pending > 0 && `, ${pending} pending`}
+                  {failed > 0 && `, ${failed} failing`}
+                </>
               )}
-              <span className="truncate text-foreground">{checkRun.name}</span>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span
-                className={
-                  checkRun.state === "passed"
-                    ? "text-xs text-emerald-600 dark:text-emerald-500"
-                    : checkRun.state === "pending"
-                      ? "text-xs text-amber-600 dark:text-amber-500"
-                      : "text-xs text-destructive"
-                }
+            </span>
+          </div>
+        </button>
+
+        {/* Action buttons — outside the toggle button */}
+        {!showLoading && (
+          <div className="flex shrink-0 items-center gap-1">
+            {failed > 0 && onFixChecks && (
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  onFixChecks(checkRuns.filter((cr) => cr.state === "failed"));
+                }}
               >
-                {getCheckStateLabel(checkRun.state)}
-              </span>
-              {checkRun.detailsUrl ? (
-                /* oxlint-disable-next-line nextjs/no-html-link-for-pages */
-                <a
-                  href={checkRun.detailsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label={`Open details for ${checkRun.name}`}
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              ) : null}
-            </div>
-          </li>
-        ))}
-      </ul>
+                <Sparkles className="h-3 w-3" />
+                Fix errors
+              </button>
+            )}
+
+            {onRefresh && (
+              <button
+                type="button"
+                aria-label="Refresh checks"
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => onRefresh()}
+              >
+                <RefreshCw
+                  className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
+                />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Chevron — always on the far right */}
+        {!showLoading &&
+          (detailsOpen ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ))}
+      </div>
+
+      {/* ---- Expanded detail list ---- */}
+      {detailsOpen && !showLoading && (
+        <div className="relative border-t border-border px-3 pb-3 pt-2">
+          {/* Sort/group toggle – absolutely positioned, floats top-right */}
+          {showGroupToggle && (
+            <button
+              type="button"
+              onClick={() =>
+                setGroupMode(groupMode === "status" ? "flat" : "status")
+              }
+              className="absolute right-3 top-2 z-10 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label={
+                groupMode === "status"
+                  ? "Switch to flat list"
+                  : "Switch to grouped by status"
+              }
+              title={groupMode === "status" ? "Flat list" : "Group by status"}
+            >
+              {groupMode === "status" ? (
+                <List className="h-3.5 w-3.5" />
+              ) : (
+                <ArrowUpDown className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
+
+          {/* pr-7 reserves space so check names truncate before the toggle button */}
+          <div
+            className={cn(
+              "max-h-48 overflow-y-auto",
+              showGroupToggle && "pr-7",
+            )}
+          >
+            {groupMode === "status" && showGroupToggle ? (
+              <div className="space-y-1">
+                {groupOrder.map((state) => {
+                  const runs = grouped[state];
+                  if (!runs || runs.length === 0) return null;
+                  return (
+                    <GroupSection
+                      key={state}
+                      state={state}
+                      checkRuns={runs}
+                      defaultOpen
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <ul className="space-y-0.5">
+                {sorted.map((cr, i) => (
+                  <li key={`${cr.name}-${cr.detailsUrl ?? "no-url"}-${i}`}>
+                    <CheckRunRow checkRun={cr} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

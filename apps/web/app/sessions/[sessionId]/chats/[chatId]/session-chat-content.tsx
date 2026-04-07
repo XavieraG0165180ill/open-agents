@@ -3836,6 +3836,34 @@ export function SessionChatContent({
           onMerged={handleMerged}
           onViewDiff={() => setShowDiffPanel(true)}
           canViewDiff={supportsDiff && Boolean(diff || session.cachedDiff)}
+          onFixChecks={async (failedRuns) => {
+            setMergeDialogOpen(false);
+
+            let text = "";
+            try {
+              const res = await fetch(
+                `/api/sessions/${session.id}/checks/fix`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ checkRuns: failedRuns }),
+                },
+              );
+              if (res.ok) {
+                const data = (await res.json()) as { message: string };
+                text = data.message;
+              }
+            } catch {
+              // Fall through to fallback
+            }
+
+            if (!text) {
+              const names = failedRuns.map((r) => r.name).join(", ");
+              text = `# Fix Failing Checks\n\nThe following checks are failing: ${names}. Please investigate and push a fix.`;
+            }
+
+            void sendMessageWithPendingState({ text });
+          }}
         />
       )}
 

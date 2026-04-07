@@ -17,6 +17,7 @@ type PullRequestCheckSummary = {
 };
 
 export type PullRequestCheckRun = {
+  id: number;
   name: string;
   state: PullRequestCheckState;
   status: string | null;
@@ -489,6 +490,7 @@ export async function getPullRequestMergeReadiness(params: {
       });
 
       checkRuns = checksResponse.data.check_runs.map((checkRun) => ({
+        id: checkRun.id,
         name: checkRun.name,
         state: getCheckRunState(checkRun.status, checkRun.conclusion),
         status: checkRun.status,
@@ -528,6 +530,7 @@ export async function getPullRequestMergeReadiness(params: {
         }));
 
         checkRuns = statuses.map((status) => ({
+          id: 0,
           name: status.context || "Status check",
           state: getCombinedStatusState(status.state),
           status: status.state,
@@ -572,6 +575,7 @@ export async function getPullRequestMergeReadiness(params: {
 
         if (requiredContexts.length > 0) {
           checkRuns = requiredContexts.map((context) => ({
+            id: 0,
             name: context,
             state: "pending" as PullRequestCheckState,
             status: "expected",

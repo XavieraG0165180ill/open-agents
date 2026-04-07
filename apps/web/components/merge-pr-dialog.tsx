@@ -1,11 +1,20 @@
 "use client";
 
-import { AlertTriangle, Check, GitMerge, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  GitMerge,
+  Loader2,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MergeReadinessResponse } from "@/app/api/sessions/[sessionId]/merge-readiness/route";
 import type { MergePullRequestResponse } from "@/app/api/sessions/[sessionId]/merge/route";
 import type { Session } from "@/lib/db/schema";
-import type { PullRequestMergeMethod } from "@/lib/github/client";
+import type {
+  PullRequestCheckRun,
+  PullRequestMergeMethod,
+} from "@/lib/github/client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,14 +24,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { CheckRunsList } from "@/components/merge-check-runs";
 import { MergePrDialogActions } from "@/components/merge-pr-dialog-actions";
@@ -34,17 +41,27 @@ interface MergePrDialogProps {
   onMerged?: (result: MergePullRequestResponse) => Promise<void> | void;
   onViewDiff?: () => void;
   canViewDiff?: boolean;
+  /** Called when the user clicks "Fix errors" — receives all failing check runs */
+  onFixChecks?: (failedRuns: PullRequestCheckRun[]) => Promise<void> | void;
 }
 
 const mergeMethodLabels: Record<PullRequestMergeMethod, string> = {
-  squash: "Squash",
-  merge: "Merge commit",
-  rebase: "Rebase",
+  squash: "Squash and merge",
+  merge: "Create a merge commit",
+  rebase: "Rebase and merge",
 };
 
-function formatMergeMethodLabel(method: PullRequestMergeMethod): string {
-  return mergeMethodLabels[method] ?? method;
-}
+const mergeMethodButtonLabels: Record<PullRequestMergeMethod, string> = {
+  squash: "Squash & Archive",
+  merge: "Merge & Archive",
+  rebase: "Rebase & Archive",
+};
+
+const mergeMethodDescriptions: Record<PullRequestMergeMethod, string> = {
+  squash: "Combine all commits into one commit in the base branch.",
+  merge: "All commits will be added to the base branch via a merge commit.",
+  rebase: "All commits will be rebased and added to the base branch.",
+};
 
 export function MergePrDialog({
   open,
@@ -53,6 +70,7 @@ export function MergePrDialog({
   onMerged,
   onViewDiff,
   canViewDiff = false,
+  onFixChecks,
 }: MergePrDialogProps) {
   const [readiness, setReadiness] = useState<MergeReadinessResponse | null>(
     null,
@@ -239,6 +257,11 @@ export function MergePrDialog({
     }
   };
 
+  const allowedMethods = readiness?.allowedMethods ?? ["squash"];
+  const hasMultipleMethods = allowedMethods.length > 1;
+  const mergeDisabled =
+    isSubmitting || isLoadingReadiness || !readiness || !readiness.pr;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -255,83 +278,43 @@ export function MergePrDialog({
         <MergePrDialogActions
           canViewDiff={canViewDiff}
           canOpenPullRequest={Boolean(pullRequestUrl)}
-          isLoadingReadiness={isLoadingReadiness}
-          isSubmitting={isSubmitting}
           onOpenPullRequest={openPullRequest}
-          onRefresh={() => {
-            void loadReadiness();
-          }}
           onViewDiff={onViewDiff}
         />
 
         <div className="grid gap-4 py-2">
-          {isLoadingReadiness ? (
-            <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Checking merge readiness...
-            </div>
-          ) : (
-            <>
-              {readiness?.checks.requiredTotal ? (
-                <div className="rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-                  Checks: {readiness.checks.passed} passed,{" "}
-                  {readiness.checks.pending} pending, {readiness.checks.failed}{" "}
-                  failing
-                </div>
-              ) : null}
-
-              {readiness?.checkRuns.length ? (
-                <CheckRunsList checkRuns={readiness.checkRuns} />
-              ) : null}
-
-              <div className="grid gap-2">
-                <Label htmlFor="merge-method">Merge method</Label>
-                <Select
-                  value={mergeMethod}
-                  onValueChange={(value) => {
-                    if (
-                      value === "merge" ||
-                      value === "squash" ||
-                      value === "rebase"
-                    ) {
-                      setMergeMethod(value);
-                    }
-                  }}
-                  disabled={
-                    isSubmitting ||
-                    isLoadingReadiness ||
-                    !readiness ||
-                    readiness.allowedMethods.length === 0
+          <CheckRunsList
+            checkRuns={readiness?.checkRuns ?? []}
+            checks={
+              readiness?.checks.requiredTotal
+                ? {
+                    passed: readiness.checks.passed,
+                    pending: readiness.checks.pending,
+                    failed: readiness.checks.failed,
                   }
-                >
-                  <SelectTrigger id="merge-method" className="w-full">
-                    <SelectValue placeholder="Select merge method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(readiness?.allowedMethods ?? ["squash"]).map((method) => (
-                      <SelectItem key={method} value={method}>
-                        {formatMergeMethodLabel(method)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                : undefined
+            }
+            onRefresh={() => {
+              void loadReadiness();
+            }}
+            isRefreshing={isLoadingReadiness}
+            isLoading={isLoadingReadiness && !readiness}
+            onFixChecks={onFixChecks}
+          />
 
-              <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium">Delete source branch</p>
-                  <p className="text-xs text-muted-foreground">
-                    Deletes the PR branch after merge when possible.
-                  </p>
-                </div>
-                <Switch
-                  checked={deleteBranch}
-                  onCheckedChange={setDeleteBranch}
-                  disabled={isSubmitting || isLoadingReadiness}
-                />
-              </div>
-            </>
-          )}
+          <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Delete source branch</p>
+              <p className="text-xs text-muted-foreground">
+                Deletes the PR branch after merge when possible.
+              </p>
+            </div>
+            <Switch
+              checked={deleteBranch}
+              onCheckedChange={setDeleteBranch}
+              disabled={isSubmitting || isLoadingReadiness}
+            />
+          </div>
 
           {error && (
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -349,27 +332,65 @@ export function MergePrDialog({
             Cancel
           </Button>
           {canMerge ? (
-            <Button
-              onClick={() => void handleMerge()}
-              disabled={
-                isSubmitting ||
-                isLoadingReadiness ||
-                !readiness ||
-                !readiness.pr
-              }
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Merging...
-                </>
-              ) : (
-                <>
-                  <Check className="mr-2 h-4 w-4" />
-                  Confirm Merge & Archive
-                </>
+            <div className="flex w-full sm:w-auto">
+              <Button
+                onClick={() => void handleMerge()}
+                disabled={mergeDisabled}
+                className={`min-w-0 flex-1 sm:flex-none${hasMultipleMethods ? " rounded-r-none" : ""}`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Merging...
+                  </>
+                ) : (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    {mergeMethodButtonLabels[mergeMethod]}
+                  </>
+                )}
+              </Button>
+              {hasMultipleMethods && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="default"
+                      size="icon"
+                      className="rounded-l-none border-l border-l-primary-foreground/25"
+                      disabled={mergeDisabled}
+                      aria-label="Choose merge method"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-72">
+                    {allowedMethods.map((method) => (
+                      <DropdownMenuItem
+                        key={method}
+                        className="items-start gap-3 py-2"
+                        onSelect={() => setMergeMethod(method)}
+                      >
+                        <Check
+                          className={
+                            mergeMethod === method
+                              ? "mt-0.5 h-4 w-4"
+                              : "mt-0.5 h-4 w-4 opacity-0"
+                          }
+                        />
+                        <div className="flex flex-col">
+                          <span className="font-medium">
+                            {mergeMethodLabels[method]}
+                          </span>
+                          <span className="text-muted-foreground text-xs">
+                            {mergeMethodDescriptions[method]}
+                          </span>
+                        </div>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
-            </Button>
+            </div>
           ) : (
             <Button
               variant="destructive"
