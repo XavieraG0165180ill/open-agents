@@ -201,7 +201,7 @@ function DiffFileList({ files }: { files: DiffFile[] }) {
   if (files.length === 0) {
     return (
       <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-        No changes detected
+        No file changes yet
       </div>
     );
   }
@@ -619,7 +619,7 @@ function InlinePrCreatePanel({
             branchName: displayBranch,
           });
           finalTitle = generated.title ?? session.title;
-          finalBody = finalBody || generated.body ?? "";
+          finalBody = finalBody || (generated.body ?? "");
           if (generated.prHeadOwner) {
             setPrHeadOwner(generated.prHeadOwner);
           }
@@ -1226,24 +1226,24 @@ export function GitPanel(props: GitPanelProps) {
       </div>
 
       {/* Tab bar */}
-      <div className="flex items-center gap-0.5 border-b border-border px-3 py-1">
+      <div className="flex items-center gap-0.5 border-b border-border px-1">
         {(["code", "diff", "pr"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
             onClick={() => setGitPanelTab(tab)}
             className={cn(
-              "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+              "rounded-md px-2.5 py-2 text-xs font-medium transition-colors",
               gitPanelTab === tab
                 ? "bg-secondary text-secondary-foreground"
-                : "text-muted-foreground hover:text-foreground",
+                : "text-muted-foreground hover:bg-muted/50",
             )}
           >
             {tab === "code"
               ? "Code"
               : tab === "diff"
                 ? "Changes"
-                : "Pull Request"}
+                : "Git"}
             {tab === "diff" && hasDiffChanges && (
               <span className="ml-1 text-[10px] text-muted-foreground">
                 {diffFiles?.length ?? 0}
@@ -1373,7 +1373,7 @@ export function GitPanel(props: GitPanelProps) {
               </>
             ) : (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                {hasDiff ? "Loading..." : "No changes detected"}
+                {hasDiff ? "Loading..." : "No file changes yet"}
               </div>
             )}
           </div>
