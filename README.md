@@ -28,7 +28,7 @@ Web (`apps/web/.env`):
 
 ### Setting up Vercel OAuth (primary sign-in)
 
-1. Go to [vercel.com/account/oauth-apps](https://vercel.com/account/oauth-apps) and create a new OAuth app
+1. Go to [Apps Settings](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fsettings%2Fapps&title=Go+to+Apps+Settings) and create a new OAuth app
 2. Set the redirect URI to `http://localhost:3000/api/auth/vercel/callback` (for local dev)
 3. Copy the **Client ID** and **Client Secret** into your `apps/web/.env`:
    ```
