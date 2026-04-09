@@ -12,6 +12,7 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   Loader2,
+  RefreshCw,
   SquareDot,
   SquareMinus,
   SquarePlus,
@@ -962,6 +963,28 @@ function InlineMergePanel({
           {error}
         </div>
       )}
+
+      <Button
+        size="sm"
+        variant="outline"
+        className="w-full"
+        onClick={() => {
+          void loadReadiness();
+        }}
+        disabled={isSubmitting || isLoadingReadiness}
+      >
+        {isLoadingReadiness ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Refreshing...
+          </>
+        ) : (
+          <>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </>
+        )}
+      </Button>
 
       {/* Merge action */}
       {canMerge ? (
