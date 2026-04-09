@@ -182,22 +182,24 @@ export function ChatTabs({ activeChatId }: ChatTabsProps) {
                   )}
                 >
                   {isRenaming ? (
-                    <input
-                      ref={renameInputRef}
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={() => void handleFinishRename()}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          void handleFinishRename();
-                        }
-                        if (e.key === "Escape") {
-                          setRenamingChatId(null);
-                        }
-                      }}
-                      className="max-w-[140px] border-none bg-transparent px-3 py-2 text-sm font-medium outline-none ring-1 ring-ring"
-                      autoFocus
-                    />
+                    <div className="flex items-center px-2 py-2">
+                      <input
+                        ref={renameInputRef}
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => void handleFinishRename()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            void handleFinishRename();
+                          }
+                          if (e.key === "Escape") {
+                            setRenamingChatId(null);
+                          }
+                        }}
+                        className="max-w-[130px] rounded border border-border bg-background px-1.5 py-0 text-sm font-medium outline-none focus:ring-1 focus:ring-ring"
+                        autoFocus
+                      />
+                    </div>
                   ) : (
                     <button
                       type="button"
