@@ -1,5 +1,5 @@
 import type { SandboxState } from "@open-harness/sandbox";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "./client";
 import {
   chatMessages,
@@ -301,6 +301,56 @@ export async function claimSessionLifecycleRunId(
     .update(sessions)
     .set({ lifecycleRunId: runId, updatedAt: new Date() })
     .where(and(eq(sessions.id, sessionId), isNull(sessions.lifecycleRunId)))
+    .returning({ id: sessions.id });
+
+  return Boolean(updated);
+}
+
+export async function claimSessionSandboxEnsureLease(
+  sessionId: string,
+  leaseId: string,
+  expiresAt: Date,
+) {
+  const now = new Date();
+  const [updated] = await db
+    .update(sessions)
+    .set({
+      sandboxEnsureLeaseId: leaseId,
+      sandboxEnsureLeaseExpiresAt: expiresAt,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        or(
+          isNull(sessions.sandboxEnsureLeaseId),
+          eq(sessions.sandboxEnsureLeaseId, leaseId),
+          lt(sessions.sandboxEnsureLeaseExpiresAt, now),
+        ),
+      ),
+    )
+    .returning({ id: sessions.id });
+
+  return Boolean(updated);
+}
+
+export async function releaseSessionSandboxEnsureLease(
+  sessionId: string,
+  leaseId: string,
+) {
+  const [updated] = await db
+    .update(sessions)
+    .set({
+      sandboxEnsureLeaseId: null,
+      sandboxEnsureLeaseExpiresAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.sandboxEnsureLeaseId, leaseId),
+      ),
+    )
     .returning({ id: sessions.id });
 
   return Boolean(updated);

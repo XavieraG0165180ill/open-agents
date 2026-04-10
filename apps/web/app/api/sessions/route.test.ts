@@ -6,12 +6,14 @@ let currentSession: {
     id: string;
     username: string;
     name: string;
+    email?: string | null;
   };
 } | null = {
   user: {
     id: "user-1",
     username: "nico",
     name: "Nico",
+    email: "nico@example.com",
   },
 };
 let savedLink: VercelProjectSelection | null = null;
@@ -19,9 +21,26 @@ let currentVercelToken: string | null = "vercel-token";
 let matchingProjects: VercelProjectSelection[] = [];
 const createCalls: Array<Record<string, unknown>> = [];
 const upsertCalls: Array<Record<string, unknown>> = [];
+const ensureCalls: Array<Record<string, unknown>> = [];
+
+mock.module("next/server", () => ({
+  after: async (callback: () => Promise<void>) => {
+    await callback();
+  },
+}));
 
 mock.module("@/lib/session/get-server-session", () => ({
   getServerSession: async () => currentSession,
+}));
+
+mock.module("@/lib/sandbox/ensure-session-sandbox", () => ({
+  ensureSessionSandbox: async (input: Record<string, unknown>) => {
+    ensureCalls.push(input);
+    return {
+      sessionRecord: input.sessionRecord,
+      sandbox: null,
+    };
+  },
 }));
 
 mock.module("@/lib/random-city", () => ({
@@ -96,6 +115,7 @@ describe("/api/sessions POST vercel project linking", () => {
         id: "user-1",
         username: "nico",
         name: "Nico",
+        email: "nico@example.com",
       },
     };
     savedLink = null;
@@ -103,6 +123,7 @@ describe("/api/sessions POST vercel project linking", () => {
     matchingProjects = [];
     createCalls.length = 0;
     upsertCalls.length = 0;
+    ensureCalls.length = 0;
   });
 
   test("explicit Vercel project is validated against live repo matches before it is persisted", async () => {
@@ -276,6 +297,33 @@ describe("/api/sessions POST vercel project linking", () => {
     expect(createCalls[0]).toMatchObject({
       globalSkillRefs: [{ source: "vercel/ai", skillName: "ai-sdk" }],
     });
+  });
+
+  test("new sessions store a deterministic sandbox name and prewarm it", async () => {
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(
+      createJsonRequest({
+        repoOwner: "vercel",
+        repoName: "open-harness",
+        branch: "main",
+        cloneUrl: "https://github.com/vercel/open-harness",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(createCalls[0]?.sandboxState).toEqual(
+      expect.objectContaining({
+        type: "vercel",
+        sandboxName: expect.stringMatching(/^session_/),
+      }),
+    );
+    expect(ensureCalls).toEqual([
+      expect.objectContaining({
+        sessionId: createCalls[0]?.id,
+        mode: "best-effort",
+      }),
+    ]);
   });
 
   test("rejects invalid repository owners", async () => {

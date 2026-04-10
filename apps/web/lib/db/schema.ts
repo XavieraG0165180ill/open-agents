@@ -177,6 +177,8 @@ export const sessions = pgTable(
     hibernateAfter: timestamp("hibernate_after"),
     lifecycleRunId: text("lifecycle_run_id"),
     lifecycleError: text("lifecycle_error"),
+    sandboxEnsureLeaseId: text("sandbox_ensure_lease_id"),
+    sandboxEnsureLeaseExpiresAt: timestamp("sandbox_ensure_lease_expires_at"),
     // Git stats (for display in session list)
     linesAdded: integer("lines_added").default(0),
     linesRemoved: integer("lines_removed").default(0),

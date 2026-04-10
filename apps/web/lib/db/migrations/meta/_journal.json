@@ -183,6 +183,13 @@
       "when": 1775216632004,
       "tag": "0025_zippy_leech",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1775828007478,
+      "tag": "0026_faithful_baron_zemo",
+      "breakpoints": true
     }
   ]
 }

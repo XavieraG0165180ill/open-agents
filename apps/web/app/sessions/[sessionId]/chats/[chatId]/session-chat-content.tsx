@@ -3493,7 +3493,6 @@ export function SessionChatContent({
                           e.preventDefault();
                           if (
                             isArchived ||
-                            !isSandboxActive ||
                             isChatInFlight ||
                             hasPendingResponse
                           ) {
@@ -3727,7 +3726,7 @@ export function SessionChatContent({
                                 !hasPendingResponse
                               ) {
                                 e.preventDefault();
-                                if (!isArchived && isSandboxActive) {
+                                if (!isArchived) {
                                   e.currentTarget.form?.requestSubmit();
                                 }
                               }
@@ -3903,8 +3902,7 @@ export function SessionChatContent({
                                         (!input.trim() &&
                                           images.length === 0 &&
                                           textAttachments.length === 0) ||
-                                        isUpdatingModel ||
-                                        !isSandboxActive
+                                        isUpdatingModel
                                       }
                                       className="h-8 w-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30"
                                     >
@@ -3914,7 +3912,7 @@ export function SessionChatContent({
                                 </TooltipTrigger>
                                 {!isSandboxActive && !isArchived && (
                                   <TooltipContent side="top" sideOffset={8}>
-                                    Waiting for sandbox...
+                                    Sandbox will start when you send
                                   </TooltipContent>
                                 )}
                               </Tooltip>

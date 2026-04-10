@@ -16,6 +16,10 @@ import { createCancelableReadableStream } from "@/lib/chat/create-cancelable-rea
 import { assistantFileLinkPrompt } from "@/lib/assistant-file-links";
 import { buildActiveLifecycleUpdate } from "@/lib/sandbox/lifecycle";
 import {
+  ensureSessionSandbox,
+  SessionSandboxEnsureError,
+} from "@/lib/sandbox/ensure-session-sandbox";
+import {
   requireAuthenticatedUser,
   requireOwnedSessionChat,
 } from "./_lib/chat-context";
@@ -57,18 +61,12 @@ export async function POST(req: Request) {
     sessionId,
     chatId,
     forbiddenMessage: "Unauthorized",
-    requireActiveSandbox: true,
-    sandboxInactiveMessage: "Sandbox not initialized",
   });
   if (!chatContext.ok) {
     return chatContext.response;
   }
 
   const { sessionRecord, chat } = chatContext;
-  const activeSandboxState = sessionRecord.sandboxState;
-  if (!activeSandboxState) {
-    throw new Error("Sandbox not initialized");
-  }
 
   // Guard: if a workflow is already running for this chat, reconnect to it
   // instead of starting a duplicate. This prevents auto-submit from spawning
@@ -94,11 +92,31 @@ export async function POST(req: Request) {
     }
   }
 
+  let ensuredSessionRecord = sessionRecord;
+  try {
+    const ensureResult = await ensureSessionSandbox({
+      sessionId,
+      sessionRecord,
+      user: { id: userId },
+    });
+    ensuredSessionRecord = ensureResult.sessionRecord;
+  } catch (error) {
+    if (error instanceof SessionSandboxEnsureError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+
+    console.error(`Failed to ensure sandbox for session ${sessionId}:`, error);
+    return Response.json(
+      { error: "Failed to prepare sandbox" },
+      { status: 500 },
+    );
+  }
+
   const requestStartedAt = new Date();
 
   // Refresh lifecycle activity so long-running responses don't look idle.
   await updateSession(sessionId, {
-    ...buildActiveLifecycleUpdate(sessionRecord.sandboxState, {
+    ...buildActiveLifecycleUpdate(ensuredSessionRecord.sandboxState, {
       activityAt: requestStartedAt,
     }),
   });
@@ -114,10 +132,15 @@ export async function POST(req: Request) {
   // would lose the tool result.
   void persistAssistantMessagesWithToolResults(chatId, messages);
 
+  const activeSandboxState = ensuredSessionRecord.sandboxState;
+  if (!activeSandboxState) {
+    return Response.json({ error: "Sandbox not initialized" }, { status: 400 });
+  }
+
   const runtimePromise = createChatRuntime({
     userId,
     sessionId,
-    sessionRecord,
+    sessionRecord: ensuredSessionRecord,
   });
   const preferencesPromise = getUserPreferences(userId).catch((error) => {
     console.error("Failed to load user preferences:", error);
@@ -145,12 +168,14 @@ export async function POST(req: Request) {
 
   // Determine if auto-commit and auto-PR should run after a natural finish.
   const shouldAutoCommitPush =
-    sessionRecord.autoCommitPushOverride ??
+    ensuredSessionRecord.autoCommitPushOverride ??
     preferences?.autoCommitPush ??
     false;
   const shouldAutoCreatePr =
     shouldAutoCommitPush &&
-    (sessionRecord.autoCreatePrOverride ?? preferences?.autoCreatePr ?? false);
+    (ensuredSessionRecord.autoCreatePrOverride ??
+      preferences?.autoCreatePr ??
+      false);
 
   // Start the durable workflow
   const run = await start(runAgentWorkflow, [
@@ -176,13 +201,13 @@ export async function POST(req: Request) {
         customInstructions: assistantFileLinkPrompt,
       },
       ...(shouldAutoCommitPush &&
-        sessionRecord.repoOwner &&
-        sessionRecord.repoName && {
+        ensuredSessionRecord.repoOwner &&
+        ensuredSessionRecord.repoName && {
           autoCommitEnabled: true,
           autoCreatePrEnabled: shouldAutoCreatePr,
-          sessionTitle: sessionRecord.title,
-          repoOwner: sessionRecord.repoOwner,
-          repoName: sessionRecord.repoName,
+          sessionTitle: ensuredSessionRecord.title,
+          repoOwner: ensuredSessionRecord.repoOwner,
+          repoName: ensuredSessionRecord.repoName,
         }),
     },
   ]);

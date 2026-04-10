@@ -1,38 +1,24 @@
-import { connectSandbox, type SandboxState } from "@open-harness/sandbox";
+import { connectSandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,
-  type SessionRecord,
 } from "@/app/api/sessions/_lib/session-context";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { updateSession } from "@/lib/db/sessions";
 import { parseGitHubUrl } from "@/lib/github/client";
 import { getRepoToken } from "@/lib/github/get-repo-token";
 import { getUserGitHubToken } from "@/lib/github/user-token";
+import { DEFAULT_SANDBOX_TIMEOUT_MS } from "@/lib/sandbox/config";
 import {
-  DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-  DEFAULT_SANDBOX_PORTS,
-  DEFAULT_SANDBOX_TIMEOUT_MS,
-} from "@/lib/sandbox/config";
-import {
-  buildActiveLifecycleUpdate,
-  getNextLifecycleVersion,
-} from "@/lib/sandbox/lifecycle";
-import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
-import {
-  getVercelCliSandboxSetup,
-  syncVercelCliAuthToSandbox,
-} from "@/lib/sandbox/vercel-cli-auth";
-import { installGlobalSkills } from "@/lib/skills/global-skill-installer";
+  ensureSessionSandbox,
+  SessionSandboxEnsureError,
+} from "@/lib/sandbox/ensure-session-sandbox";
 import {
   canOperateOnSandbox,
   clearSandboxState,
-  getSessionSandboxName,
   hasResumableSandboxState,
 } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
-import { buildDevelopmentDotenvFromVercelProject } from "@/lib/vercel/projects";
-import { getUserVercelToken } from "@/lib/vercel/token";
 
 interface CreateSandboxRequest {
   repoUrl?: string;
@@ -40,67 +26,6 @@ interface CreateSandboxRequest {
   isNewBranch?: boolean;
   sessionId?: string;
   sandboxType?: "vercel";
-}
-
-async function syncVercelProjectEnvVarsToSandbox(params: {
-  userId: string;
-  sessionRecord: SessionRecord;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
-}): Promise<void> {
-  if (!params.sessionRecord.vercelProjectId) {
-    return;
-  }
-
-  const token = await getUserVercelToken(params.userId);
-  if (!token) {
-    return;
-  }
-
-  const dotenvContent = await buildDevelopmentDotenvFromVercelProject({
-    token,
-    projectIdOrName: params.sessionRecord.vercelProjectId,
-    teamId: params.sessionRecord.vercelTeamId,
-  });
-  if (!dotenvContent) {
-    return;
-  }
-
-  await params.sandbox.writeFile(
-    `${params.sandbox.workingDirectory}/.env.local`,
-    dotenvContent,
-    "utf-8",
-  );
-}
-
-async function syncVercelCliAuthForSandbox(params: {
-  userId: string;
-  sessionRecord: SessionRecord;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
-}): Promise<void> {
-  const setup = await getVercelCliSandboxSetup({
-    userId: params.userId,
-    sessionRecord: params.sessionRecord,
-  });
-
-  await syncVercelCliAuthToSandbox({
-    sandbox: params.sandbox,
-    setup,
-  });
-}
-
-async function installSessionGlobalSkills(params: {
-  sessionRecord: SessionRecord;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
-}): Promise<void> {
-  const globalSkillRefs = params.sessionRecord.globalSkillRefs ?? [];
-  if (globalSkillRefs.length === 0) {
-    return;
-  }
-
-  await installGlobalSkills({
-    sandbox: params.sandbox,
-    globalSkillRefs,
-  });
 }
 
 export async function POST(req: Request) {
@@ -117,14 +42,58 @@ export async function POST(req: Request) {
 
   const { repoUrl, branch = "main", isNewBranch = false, sessionId } = body;
 
-  // Get session for auth
   const session = await getServerSession();
   if (!session?.user) {
     return Response.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  let githubToken: string | null = null;
+  if (sessionId) {
+    const sessionContext = await requireOwnedSession({
+      userId: session.user.id,
+      sessionId,
+    });
+    if (!sessionContext.ok) {
+      return sessionContext.response;
+    }
 
+    try {
+      const { sandbox } = await ensureSessionSandbox({
+        sessionId,
+        sessionRecord: sessionContext.sessionRecord,
+        user: {
+          id: session.user.id,
+          username: session.user.username,
+          name: session.user.name,
+          email: session.user.email,
+        },
+      });
+
+      return Response.json({
+        createdAt: Date.now(),
+        timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+        currentBranch: sandbox?.currentBranch,
+        mode: "vercel",
+      });
+    } catch (error) {
+      if (error instanceof SessionSandboxEnsureError) {
+        return Response.json(
+          { error: error.message },
+          { status: error.status },
+        );
+      }
+
+      console.error(
+        `Failed to ensure sandbox for session ${sessionId}:`,
+        error,
+      );
+      return Response.json(
+        { error: "Failed to create sandbox" },
+        { status: 500 },
+      );
+    }
+  }
+
+  let githubToken: string | null = null;
   if (repoUrl) {
     const parsedRepo = parseGitHubUrl(repoUrl);
     if (!parsedRepo) {
@@ -147,138 +116,45 @@ export async function POST(req: Request) {
     githubToken = await getUserGitHubToken();
   }
 
-  // Validate session ownership
-  let sessionRecord: SessionRecord | undefined;
-  if (sessionId) {
-    const sessionContext = await requireOwnedSession({
-      userId: session.user.id,
-      sessionId,
-    });
-    if (!sessionContext.ok) {
-      return sessionContext.response;
-    }
-
-    sessionRecord = sessionContext.sessionRecord;
-  }
-
-  const sandboxName = sessionId ? getSessionSandboxName(sessionId) : undefined;
   const githubAccount = await getGitHubAccount(session.user.id);
   const githubNoreplyEmail =
     githubAccount?.externalUserId && githubAccount.username
       ? `${githubAccount.externalUserId}+${githubAccount.username}@users.noreply.github.com`
       : undefined;
 
-  const gitUser = {
-    name: session.user.name ?? githubAccount?.username ?? session.user.username,
-    email:
-      githubNoreplyEmail ??
-      session.user.email ??
-      `${session.user.username}@users.noreply.github.com`,
-  };
-
-  const env: Record<string, string> = {};
-  if (githubToken) {
-    env.GITHUB_TOKEN = githubToken;
-  }
-
-  // ============================================
-  // CREATE OR RESUME: Create a named persistent sandbox for this session.
-  // ============================================
-  const startTime = Date.now();
-
-  const source = repoUrl
-    ? {
-        repo: repoUrl,
-        branch: isNewBranch ? undefined : branch,
-        newBranch: isNewBranch ? branch : undefined,
-        token: githubToken ?? undefined,
-      }
-    : undefined;
-
   const sandbox = await connectSandbox({
     state: {
       type: "vercel",
-      ...(sandboxName ? { sandboxName } : {}),
-      source,
+      ...(repoUrl
+        ? {
+            source: {
+              repo: repoUrl,
+              branch: isNewBranch ? undefined : branch,
+              newBranch: isNewBranch ? branch : undefined,
+              token: githubToken ?? undefined,
+            },
+          }
+        : {}),
     },
     options: {
-      env,
-      gitUser,
+      env: githubToken ? { GITHUB_TOKEN: githubToken } : undefined,
+      gitUser: {
+        name:
+          session.user.name ?? githubAccount?.username ?? session.user.username,
+        email:
+          githubNoreplyEmail ??
+          session.user.email ??
+          `${session.user.username}@users.noreply.github.com`,
+      },
       timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-      ports: DEFAULT_SANDBOX_PORTS,
-      baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-      persistent: !!sandboxName,
-      resume: !!sandboxName,
-      createIfMissing: !!sandboxName,
     },
   });
-
-  if (sessionId && sandbox.getState) {
-    const nextState = sandbox.getState() as SandboxState;
-    await updateSession(sessionId, {
-      sandboxState: nextState,
-      snapshotUrl: null,
-      snapshotCreatedAt: null,
-      lifecycleVersion: getNextLifecycleVersion(
-        sessionRecord?.lifecycleVersion,
-      ),
-      ...buildActiveLifecycleUpdate(nextState),
-    });
-
-    if (sessionRecord) {
-      try {
-        await syncVercelProjectEnvVarsToSandbox({
-          userId: session.user.id,
-          sessionRecord,
-          sandbox,
-        });
-      } catch (error) {
-        console.error(
-          `Failed to sync Vercel env vars for session ${sessionRecord.id}:`,
-          error,
-        );
-      }
-
-      try {
-        await syncVercelCliAuthForSandbox({
-          userId: session.user.id,
-          sessionRecord,
-          sandbox,
-        });
-      } catch (error) {
-        console.error(
-          `Failed to prepare Vercel CLI auth for session ${sessionRecord.id}:`,
-          error,
-        );
-      }
-
-      try {
-        await installSessionGlobalSkills({
-          sessionRecord,
-          sandbox,
-        });
-      } catch (error) {
-        console.error(
-          `Failed to install global skills for session ${sessionRecord.id}:`,
-          error,
-        );
-      }
-    }
-
-    kickSandboxLifecycleWorkflow({
-      sessionId,
-      reason: "sandbox-created",
-    });
-  }
-
-  const readyMs = Date.now() - startTime;
 
   return Response.json({
     createdAt: Date.now(),
     timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-    currentBranch: repoUrl ? branch : undefined,
+    currentBranch: sandbox.currentBranch,
     mode: "vercel",
-    timing: { readyMs },
   });
 }
 
@@ -316,12 +192,10 @@ export async function DELETE(req: Request) {
 
   const { sessionRecord } = sessionContext;
 
-  // If there's no sandbox to stop, return success (idempotent)
   if (!canOperateOnSandbox(sessionRecord.sandboxState)) {
     return Response.json({ success: true, alreadyStopped: true });
   }
 
-  // Connect and stop using unified API
   const sandbox = await connectSandbox(sessionRecord.sandboxState);
   await sandbox.stop();
 

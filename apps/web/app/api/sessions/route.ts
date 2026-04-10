@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { nanoid } from "nanoid";
 import {
   createSessionWithInitialChat,
@@ -15,6 +16,8 @@ import {
   isValidGitHubRepoOwner,
 } from "@/lib/github/repo-identifiers";
 import { getRandomCityName } from "@/lib/random-city";
+import { ensureSessionSandbox } from "@/lib/sandbox/ensure-session-sandbox";
+import { getSessionSandboxName } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { listMatchingVercelProjects } from "@/lib/vercel/projects";
 import { getUserVercelToken } from "@/lib/vercel/token";
@@ -304,9 +307,11 @@ export async function POST(req: Request) {
     const effectiveAutoCommitPush =
       autoCommitPush ?? preferences.autoCommitPush;
     const effectiveAutoCreatePr = autoCreatePr ?? preferences.autoCreatePr;
+    const sessionId = nanoid();
+    const chatId = nanoid();
     const result = await createSessionWithInitialChat({
       session: {
-        id: nanoid(),
+        id: sessionId,
         userId: session.user.id,
         title,
         status: "running",
@@ -324,15 +329,39 @@ export async function POST(req: Request) {
           ? effectiveAutoCreatePr
           : false,
         globalSkillRefs: preferences.globalSkillRefs,
-        sandboxState: { type: sandboxType },
+        sandboxState: {
+          type: sandboxType,
+          sandboxName: getSessionSandboxName(sessionId),
+        },
         lifecycleState: "provisioning",
         lifecycleVersion: 0,
       },
       initialChat: {
-        id: nanoid(),
+        id: chatId,
         title: "New chat",
         modelId: preferences.defaultModelId,
       },
+    });
+
+    after(async () => {
+      try {
+        await ensureSessionSandbox({
+          sessionId,
+          sessionRecord: result.session,
+          user: {
+            id: session.user.id,
+            username: session.user.username,
+            name: session.user.name,
+            email: session.user.email,
+          },
+          mode: "best-effort",
+        });
+      } catch (error) {
+        console.error(
+          `Failed to prewarm sandbox for session ${sessionId}:`,
+          error,
+        );
+      }
     });
 
     return Response.json(result);
