@@ -1,4 +1,5 @@
 import { getChatMessages, getChatsBySessionId } from "@/lib/db/sessions";
+import { redactGitHubToken as redactGitHubAuthToken } from "@/lib/github/repo-identifiers";
 
 export function generateBranchName(
   username: string,
@@ -79,10 +80,7 @@ export function isRetryableForkPushError(output: string): boolean {
 }
 
 export function redactGitHubToken(text: string): string {
-  return text.replace(
-    /https:\/\/x-access-token:[^@\s]+@github\.com/gi,
-    "https://x-access-token:***@github.com",
-  );
+  return redactGitHubAuthToken(text);
 }
 
 export function extractGitHubOwnerFromRemoteUrl(

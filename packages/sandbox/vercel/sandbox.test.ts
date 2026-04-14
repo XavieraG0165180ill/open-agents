@@ -360,6 +360,29 @@ describe("VercelSandbox.create", () => {
     });
   });
 
+  test("redacts authenticated clone urls from clone failures", async () => {
+    runCommandMock = async () => ({
+      exitCode: 128,
+      cmdId: "cmd-clone-fail",
+      stdout: async () => "",
+      stderr: async () =>
+        "fatal: unable to access 'https://x-access-token:ghp_secret@github.com/open-harness/example.git'",
+    });
+
+    await expect(
+      sandboxModule.VercelSandbox.create({
+        baseSnapshotId: "snap-base-1",
+        source: {
+          url: "https://github.com/open-harness/example",
+          branch: "main",
+          token: "ghp_secret",
+        },
+      }),
+    ).rejects.toThrow(
+      "https://x-access-token:***@github.com/open-harness/example.git",
+    );
+  });
+
   test("creates empty git repo from base snapshot", async () => {
     await sandboxModule.VercelSandbox.create({
       baseSnapshotId: "snap-base-1",

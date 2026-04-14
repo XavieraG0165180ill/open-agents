@@ -184,6 +184,31 @@ describe("performAutoCommit", () => {
     expect(result.error).toBe("Commit succeeded but push failed");
   });
 
+  test("redacts tokens from push failure logs", async () => {
+    execResults.set("git push", {
+      success: false,
+      stdout: "",
+      stderr:
+        "fatal: unable to access https://x-access-token:ghp_secret@github.com/acme/repo.git",
+    });
+
+    const originalConsoleWarn = console.warn;
+    const warnSpy = mock((_message?: unknown) => undefined);
+    console.warn = warnSpy as typeof console.warn;
+
+    try {
+      await performAutoCommit(makeParams());
+    } finally {
+      console.warn = originalConsoleWarn;
+    }
+
+    const logLine = String(warnSpy.mock.calls[0]?.[0] ?? "");
+    expect(logLine).toContain(
+      "https://x-access-token:***@github.com/acme/repo.git",
+    );
+    expect(logLine).not.toContain("ghp_secret");
+  });
+
   test("full success path returns all fields", async () => {
     const result = await performAutoCommit(makeParams());
 

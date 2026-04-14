@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  isValidGitHubRepoName,
+  isValidGitHubRepoOwner,
+} from "@/lib/github/repo-identifiers";
 
 interface GitHubUser {
   login: string;
@@ -106,6 +110,12 @@ export async function fetchGitHubRepos(
   const normalizedLimit = normalizeGitHubLimit(options?.limit);
   const normalizedQuery = options?.query?.trim() || undefined;
 
+  if (!isValidGitHubRepoOwner(owner)) {
+    return null;
+  }
+
+  const encodedOwner = encodeURIComponent(owner);
+
   // Check if owner is the authenticated user
   const currentUser = await fetchGitHubAPI<{ login: string }>("/user", token);
   if (!currentUser) return null;
@@ -117,7 +127,10 @@ export async function fetchGitHubRepos(
   if (isAuthenticatedUser) {
     apiEndpointType = "user";
   } else {
-    const orgResponse = await fetchGitHubAPI<unknown>(`/orgs/${owner}`, token);
+    const orgResponse = await fetchGitHubAPI<unknown>(
+      `/orgs/${encodedOwner}`,
+      token,
+    );
     if (orgResponse) {
       apiEndpointType = "org";
     }
@@ -158,9 +171,9 @@ export async function fetchGitHubRepos(
     if (apiEndpointType === "user") {
       endpoint = `/user/repos?sort=updated&direction=desc&per_page=${perPage}&page=${page}&visibility=all&affiliation=owner`;
     } else if (apiEndpointType === "org") {
-      endpoint = `/orgs/${owner}/repos?sort=updated&direction=desc&per_page=${perPage}&page=${page}&type=all&visibility=all`;
+      endpoint = `/orgs/${encodedOwner}/repos?sort=updated&direction=desc&per_page=${perPage}&page=${page}&type=all&visibility=all`;
     } else {
-      endpoint = `/users/${owner}/repos?sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
+      endpoint = `/users/${encodedOwner}/repos?sort=updated&direction=desc&per_page=${perPage}&page=${page}`;
     }
 
     const repos = await fetchGitHubAPI<GitHubRepo[]>(endpoint, token);
@@ -206,9 +219,16 @@ export async function fetchGitHubBranches(
   repo: string,
   limit?: number,
 ) {
+  if (!isValidGitHubRepoOwner(owner) || !isValidGitHubRepoName(repo)) {
+    return null;
+  }
+
+  const encodedOwner = encodeURIComponent(owner);
+  const encodedRepo = encodeURIComponent(repo);
+
   // Fetch repo info for default branch
   const repoInfo = await fetchGitHubAPI<GitHubRepoInfo>(
-    `/repos/${owner}/${repo}`,
+    `/repos/${encodedOwner}/${encodedRepo}`,
     token,
   );
   if (!repoInfo) return null;
@@ -224,7 +244,7 @@ export async function fetchGitHubBranches(
 
   while (page <= maxPages) {
     const branches = await fetchGitHubAPI<GitHubBranch[]>(
-      `/repos/${owner}/${repo}/branches?per_page=${perPage}&page=${page}`,
+      `/repos/${encodedOwner}/${encodedRepo}/branches?per_page=${perPage}&page=${page}`,
       token,
     );
 

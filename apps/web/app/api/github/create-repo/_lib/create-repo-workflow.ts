@@ -2,6 +2,10 @@ import type { Sandbox } from "@open-harness/sandbox";
 import { gateway, generateText } from "ai";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { createRepository } from "@/lib/github/client";
+import {
+  buildGitHubAuthRemoteUrl,
+  redactGitHubToken,
+} from "@/lib/github/repo-identifiers";
 
 // Escape shell metacharacters to prevent command injection
 const escapeShellArg = (arg: string) => `'${arg.replace(/'/g, "'\\''")}'`;
@@ -169,10 +173,17 @@ export async function runCreateRepoWorkflow({
     accountType === "Organization" && installationToken
       ? installationToken
       : repoToken;
-  const authUrl = repoResult.cloneUrl.replace(
-    "https://",
-    `https://x-access-token:${pushToken}@`,
-  );
+  const authUrl = buildGitHubAuthRemoteUrl({
+    token: pushToken,
+    owner: repoResult.owner,
+    repo: repoResult.repoName,
+  });
+  if (!authUrl) {
+    return {
+      ok: false,
+      response: repoCreatedError("Invalid repository configuration"),
+    };
+  }
   const addRemoteResult = await sandbox.exec(
     `git remote add origin "${authUrl}"`,
     cwd,
@@ -246,7 +257,9 @@ Respond with ONLY the commit message, nothing else.`,
   // 15. Push to remote
   const pushResult = await sandbox.exec("git push -u origin main", cwd, 60000);
   if (!pushResult.success) {
-    const pushOutput = pushResult.stdout + (pushResult.stderr ?? "");
+    const pushOutput = redactGitHubToken(
+      pushResult.stdout + (pushResult.stderr ?? ""),
+    );
     return {
       ok: false,
       response: repoCreatedError(`Failed to push: ${pushOutput.slice(0, 100)}`),

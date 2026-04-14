@@ -61,6 +61,14 @@ let sessionRecord: TestSessionRecord;
 let currentVercelAuthInfo: TestVercelAuthInfo | null;
 let currentDotenvContent: string;
 let currentDotenvError: Error | null;
+let rateLimitAllowed = true;
+
+const takeRateLimitSpy = mock(async () => ({
+  allowed: rateLimitAllowed,
+  limit: 5,
+  remaining: rateLimitAllowed ? 4 : 0,
+  retryAfterSeconds: 60,
+}));
 
 mock.module("@/lib/session/get-server-session", () => ({
   getServerSession: async () => ({
@@ -85,6 +93,19 @@ mock.module("@/lib/db/accounts", () => ({
 
 mock.module("@/lib/github/user-token", () => ({
   getUserGitHubToken: async () => null,
+}));
+
+mock.module("@/lib/github/get-repo-token", () => ({
+  getRepoToken: async () => ({ token: "ghp_repo_token" }),
+}));
+
+mock.module("@/lib/rate-limit", () => ({
+  takeRateLimit: takeRateLimitSpy,
+  createRateLimitResponse: (_result: unknown, message?: string) =>
+    Response.json(
+      { error: message ?? "Too many requests. Please try again later." },
+      { status: 429 },
+    ),
 }));
 
 mock.module("@/lib/vercel/token", () => ({
@@ -172,6 +193,8 @@ describe("/api/sandbox lifecycle kicks", () => {
     writeFileCalls.length = 0;
     execCalls.length = 0;
     dotenvSyncCalls.length = 0;
+    rateLimitAllowed = true;
+    takeRateLimitSpy.mockClear();
     currentVercelAuthInfo = {
       token: "vercel-token",
       expiresAt: 1_700_000_000,
@@ -229,6 +252,55 @@ describe("/api/sandbox lifecycle kicks", () => {
       },
     });
     expect(dotenvSyncCalls).toHaveLength(0);
+  });
+
+  test("rate limits sandbox creation requests", async () => {
+    const { POST } = await routeModulePromise;
+    rateLimitAllowed = false;
+
+    const response = await POST(
+      new Request("http://localhost/api/sandbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          sandboxType: "vercel",
+        }),
+      }),
+    );
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(429);
+    expect(body.error).toBe(
+      "Too many sandbox creation requests. Please wait and try again.",
+    );
+    expect(connectConfigs).toHaveLength(0);
+  });
+
+  test("canonicalizes GitHub repo urls before creating sandboxes", async () => {
+    const { POST } = await routeModulePromise;
+
+    currentDotenvContent = "";
+    sessionRecord.vercelProjectId = null;
+    sessionRecord.vercelProjectName = null;
+    sessionRecord.vercelTeamId = null;
+
+    const response = await POST(
+      new Request("http://localhost/api/sandbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          sandboxType: "vercel",
+          repoUrl: "git@github.com:vercel/open-harness.git",
+        }),
+      }),
+    );
+
+    expect(response.ok).toBe(true);
+    expect(connectConfigs[0]?.state.source).toMatchObject({
+      repo: "https://github.com/vercel/open-harness",
+    });
   });
 
   test("new vercel sandbox writes linked Development env vars to .env.local", async () => {

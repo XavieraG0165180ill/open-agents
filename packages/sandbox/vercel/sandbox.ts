@@ -39,6 +39,13 @@ function buildAuthenticatedGitHubUrl(
   return `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 }
 
+function redactGitHubToken(text: string): string {
+  return text.replace(
+    /https:\/\/x-access-token:[^@\s]+@github\.com/gi,
+    "https://x-access-token:***@github.com",
+  );
+}
+
 type VercelSandboxSession = ReturnType<
   InstanceType<typeof VercelSandboxSDK>["currentSession"]
 >;
@@ -503,7 +510,7 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
 
       if (cloneResult.exitCode !== 0) {
         throw new Error(
-          `Failed to clone repository '${source.url}': ${await cloneResult.stderr()}`,
+          `Failed to clone repository '${source.url}': ${redactGitHubToken(await cloneResult.stderr())}`,
         );
       }
     }

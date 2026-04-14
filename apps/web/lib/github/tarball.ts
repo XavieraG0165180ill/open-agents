@@ -7,7 +7,9 @@
  * for sandbox bootstrapping flows.
  */
 
+import { posix as pathPosix } from "path";
 import { gunzipSync } from "zlib";
+import { parseGitHubRepoUrl } from "./repo-identifiers";
 
 const DEFAULT_WORKING_DIRECTORY = "/vercel/sandbox";
 
@@ -27,6 +29,44 @@ const LOCK_FILES = new Set([
 
 function isLockFile(fileName: string): boolean {
   return LOCK_FILES.has(fileName);
+}
+
+function normalizeTarEntryName(name: string): string | null {
+  const normalized = pathPosix.normalize(name.replace(/\\/g, "/").trim());
+  if (
+    normalized.length === 0 ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/")
+  ) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function resolveRelativeTarPath(
+  entryName: string,
+  rootDir: string,
+): string | null {
+  const segments = entryName.split("/").filter(Boolean);
+  if (segments.length < 2 || segments[0] !== rootDir) {
+    return null;
+  }
+
+  const relativePath = pathPosix.normalize(segments.slice(1).join("/"));
+  if (
+    relativePath.length === 0 ||
+    relativePath === "." ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    relativePath.startsWith("/")
+  ) {
+    return null;
+  }
+
+  return relativePath;
 }
 
 export interface TarballResult {
@@ -50,11 +90,15 @@ interface RepoInfo {
  * // => { owner: "vercel", repo: "ai" }
  */
 export function parseGitHubUrl(url: string): RepoInfo {
-  const match = url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (!match) {
+  const parsed = parseGitHubRepoUrl(url);
+  if (!parsed) {
     throw new Error(`Invalid GitHub URL: ${url}`);
   }
-  return { owner: match[1]!, repo: match[2]! };
+
+  return {
+    owner: parsed.owner,
+    repo: parsed.repo,
+  };
 }
 
 function buildTarballUrl(owner: string, repo: string, ref: string): string {
@@ -123,8 +167,9 @@ export async function downloadAndExtractTarball(
     }
 
     // Parse header fields
-    const name =
+    const rawName =
       header.subarray(0, 100).toString("utf-8").split("\x00")[0] ?? "";
+    const normalizedEntryName = normalizeTarEntryName(rawName);
     const sizeOctal = header.subarray(124, 136).toString("utf-8").trim();
     const typeFlag = String.fromCharCode(header[156]!);
 
@@ -134,15 +179,22 @@ export async function downloadAndExtractTarball(
     // Move past header
     offset += 512;
 
-    // Extract root directory from first entry
-    if (!rootDir && name.includes("/")) {
-      rootDir = name.split("/")[0]!;
+    if (normalizedEntryName) {
+      const entrySegments = normalizedEntryName.split("/").filter(Boolean);
+      if (!rootDir && entrySegments.length > 0) {
+        rootDir = entrySegments[0] ?? "";
+      }
     }
 
     // Only process regular files (typeFlag '0' or empty)
-    if (typeFlag === "0" || typeFlag === "\0" || typeFlag === "") {
-      // Remove root directory prefix
-      const relativePath = name.replace(`${rootDir}/`, "");
+    if (
+      normalizedEntryName &&
+      (typeFlag === "0" || typeFlag === "\0" || typeFlag === "")
+    ) {
+      const relativePath =
+        rootDir.length > 0
+          ? resolveRelativeTarPath(normalizedEntryName, rootDir)
+          : null;
 
       if (relativePath && size > 0) {
         // Skip lock files - they're large and not useful for agent exploration
@@ -158,8 +210,10 @@ export async function downloadAndExtractTarball(
         // Skip binary files (files containing null bytes)
         // Binary files can't be stored in PostgreSQL JSONB
         if (!contentBuffer.includes(0)) {
-          const content = contentBuffer.toString("utf-8");
-          files[`${workingDirectory}/${relativePath}`] = content;
+          const filePath = pathPosix.join(workingDirectory, relativePath);
+          if (filePath.startsWith(`${workingDirectory}/`)) {
+            files[filePath] = contentBuffer.toString("utf-8");
+          }
         }
         // Binary files are silently skipped - agents work with text files anyway
       }

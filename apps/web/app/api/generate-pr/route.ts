@@ -16,12 +16,18 @@ import { getSessionById, updateSession } from "@/lib/db/sessions";
 import { getRepoToken } from "@/lib/github/get-repo-token";
 import { buildGitHubAuthRemoteUrl } from "@/lib/github/repo-identifiers";
 import { generatePullRequestContentFromSandbox } from "@/lib/git/pr-content";
+import { createRateLimitResponse, takeRateLimit } from "@/lib/rate-limit";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 // Allow up to 2 minutes for AI generation and git operations
 export const maxDuration = 120;
+
+const GENERATE_PR_RATE_LIMIT = {
+  limit: 10,
+  windowMs: 10 * 60 * 1000,
+} as const;
 
 interface GeneratePRRequest {
   sessionId: string;
@@ -76,6 +82,18 @@ export async function POST(req: Request) {
   }
   if (!isSandboxActive(sessionRecord.sandboxState)) {
     return Response.json({ error: "Sandbox not initialized" }, { status: 400 });
+  }
+
+  const rateLimitResult = await takeRateLimit({
+    scope: "generate-pr",
+    identifier: session.user.id,
+    ...GENERATE_PR_RATE_LIMIT,
+  });
+  if (!rateLimitResult.allowed) {
+    return createRateLimitResponse(
+      rateLimitResult,
+      "Too many pull request generation requests. Please wait and try again.",
+    );
   }
 
   if (!branchName) {
@@ -146,8 +164,12 @@ export async function POST(req: Request) {
     cwd,
     30000,
   );
+  const redactedFetchStdout = redactGitHubToken(fetchResult.stdout.trim());
+  const redactedFetchStderr = redactGitHubToken(
+    fetchResult.stderr?.trim() ?? "",
+  );
   console.log(
-    `[generate-pr] Fetch result: success=${fetchResult.success}, stdout=${fetchResult.stdout.trim()}, stderr=${fetchResult.stderr?.trim() ?? ""}`,
+    `[generate-pr] Fetch result: success=${fetchResult.success}, stdout=${redactedFetchStdout}, stderr=${redactedFetchStderr}`,
   );
 
   // 3c. Check for uncommitted changes
@@ -547,7 +569,17 @@ Respond with ONLY the commit message, nothing else.`,
           }
 
           const { forkRepoName } = forkResult;
-          const forkAuthUrl = `https://x-access-token:${cachedUserToken}@github.com/${forkOwner}/${forkRepoName}.git`;
+          const forkAuthUrl = buildGitHubAuthRemoteUrl({
+            token: cachedUserToken,
+            owner: forkOwner,
+            repo: forkRepoName,
+          });
+          if (!forkAuthUrl) {
+            return Response.json(
+              { error: "Invalid fork repository configuration" },
+              { status: 400 },
+            );
+          }
 
           await sandbox.exec(
             "git remote remove fork 2>/dev/null || true",

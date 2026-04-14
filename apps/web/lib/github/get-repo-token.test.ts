@@ -73,4 +73,15 @@ describe("getRepoToken", () => {
     expect(result).toEqual({ token: "ghu_user", type: "user" });
     expect(getUserGitHubTokenSpy).toHaveBeenCalledWith("user-1");
   });
+
+  test("throws a generic error when no token is available", async () => {
+    const { getRepoToken } = await modulePromise;
+
+    const error = await getRepoToken("user-1", "acme").catch(
+      (caughtError) => caughtError,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("No GitHub token available");
+  });
 });

@@ -3,7 +3,10 @@ import { generateText } from "ai";
 import { gateway } from "@open-harness/agent";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { getRepoToken } from "@/lib/github/get-repo-token";
-import { buildGitHubAuthRemoteUrl } from "@/lib/github/repo-identifiers";
+import {
+  buildGitHubAuthRemoteUrl,
+  redactGitHubToken,
+} from "@/lib/github/repo-identifiers";
 
 export interface AutoCommitParams {
   sandbox: Sandbox;
@@ -118,8 +121,11 @@ export async function performAutoCommit(
   );
 
   if (!pushResult.success) {
+    const pushErrorOutput = redactGitHubToken(
+      pushResult.stderr ?? pushResult.stdout,
+    );
     console.warn(
-      `[auto-commit] Push failed for session ${params.sessionId}: ${pushResult.stderr ?? pushResult.stdout}`,
+      `[auto-commit] Push failed for session ${params.sessionId}: ${pushErrorOutput}`,
     );
     return {
       committed: true,

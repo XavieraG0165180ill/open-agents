@@ -16,6 +16,7 @@ import { getUserPreferences } from "@/lib/db/user-preferences";
 import { getAllVariants } from "@/lib/model-variants";
 import { createCancelableReadableStream } from "@/lib/chat/create-cancelable-readable-stream";
 import { assistantFileLinkPrompt } from "@/lib/assistant-file-links";
+import { createRateLimitResponse, takeRateLimit } from "@/lib/rate-limit";
 import { getServerSession } from "@/lib/session/get-server-session";
 import {
   isManagedTemplateTrialUser,
@@ -34,6 +35,11 @@ import { runAgentWorkflow } from "@/app/workflows/chat";
 import { persistAssistantMessagesWithToolResults } from "./_lib/persist-tool-results";
 
 export const maxDuration = 800;
+
+const CHAT_WORKFLOW_RATE_LIMIT = {
+  limit: 20,
+  windowMs: 5 * 60 * 1000,
+} as const;
 
 type WebAgentUIMessageChunk = InferUIMessageChunk<WebAgentUIMessage>;
 
@@ -128,6 +134,18 @@ export async function POST(req: Request) {
         { status: 409 },
       );
     }
+  }
+
+  const rateLimitResult = await takeRateLimit({
+    scope: "chat-workflow-start",
+    identifier: userId,
+    ...CHAT_WORKFLOW_RATE_LIMIT,
+  });
+  if (!rateLimitResult.allowed) {
+    return createRateLimitResponse(
+      rateLimitResult,
+      "Too many chat requests. Please wait and try again.",
+    );
   }
 
   const requestStartedAt = new Date();

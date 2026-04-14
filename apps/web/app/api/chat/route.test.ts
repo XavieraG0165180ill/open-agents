@@ -54,6 +54,14 @@ const compareAndSetChatActiveStreamIdSpy = mock(async () => {
   return nextResult ?? compareAndSetDefaultResult;
 });
 
+let rateLimitAllowed = true;
+const takeRateLimitSpy = mock(async () => ({
+  allowed: rateLimitAllowed,
+  limit: 20,
+  remaining: rateLimitAllowed ? 19 : 0,
+  retryAfterSeconds: 30,
+}));
+
 const originalFetch = globalThis.fetch;
 
 globalThis.fetch = (async (_input: RequestInfo | URL) => {
@@ -118,6 +126,15 @@ mock.module("@/app/workflows/chat", () => ({
 
 mock.module("@/lib/chat/create-cancelable-readable-stream", () => ({
   createCancelableReadableStream: (stream: ReadableStream) => stream,
+}));
+
+mock.module("@/lib/rate-limit", () => ({
+  takeRateLimit: takeRateLimitSpy,
+  createRateLimitResponse: (_result: unknown, message?: string) =>
+    Response.json(
+      { error: message ?? "Too many requests. Please try again later." },
+      { status: 429 },
+    ),
 }));
 
 mock.module("@open-harness/agent", () => ({
@@ -252,6 +269,7 @@ describe("/api/chat route", () => {
     discoverSkillDirsCalls = [];
     existingUserMessageCount = 0;
     existingChatMessage = null;
+    rateLimitAllowed = true;
     preferencesState = {
       autoCommitPush: true,
       autoCreatePr: false,
@@ -259,6 +277,7 @@ describe("/api/chat route", () => {
     };
     compareAndSetChatActiveStreamIdSpy.mockClear();
     persistAssistantMessagesWithToolResultsSpy.mockClear();
+    takeRateLimitSpy.mockClear();
     currentAuthSession = {
       user: {
         id: "user-1",
@@ -293,6 +312,37 @@ describe("/api/chat route", () => {
     const response = await POST(createValidRequest());
 
     expect(response.ok).toBe(true);
+  });
+
+  test("rate limits new workflow starts", async () => {
+    const { POST } = await routeModulePromise;
+    rateLimitAllowed = false;
+
+    const response = await POST(createValidRequest());
+    const body = (await response.json()) as { error: string };
+
+    expect(response.status).toBe(429);
+    expect(body.error).toBe(
+      "Too many chat requests. Please wait and try again.",
+    );
+    expect(takeRateLimitSpy).toHaveBeenCalledTimes(1);
+    expect(startCalls).toHaveLength(0);
+  });
+
+  test("does not rate limit stream resume requests", async () => {
+    const { POST } = await routeModulePromise;
+    rateLimitAllowed = false;
+    if (!chatRecord) {
+      throw new Error("chatRecord must be set");
+    }
+    chatRecord.activeStreamId = "existing-run";
+    existingRunStatus = "running";
+
+    const response = await POST(createValidRequest());
+
+    expect(response.ok).toBe(true);
+    expect(takeRateLimitSpy).not.toHaveBeenCalled();
+    expect(startCalls).toHaveLength(0);
   });
 
   test("blocks a sixth message for non-Vercel trial users on the managed deployment", async () => {

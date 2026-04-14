@@ -31,8 +31,8 @@ export async function getRepoToken(
       };
     } catch (error) {
       console.error(
-        `Failed to get installation token for ${owner}, falling back to user token:`,
-        error,
+        "Failed to get installation token, falling back to user token:",
+        error instanceof Error ? error.message : String(error),
       );
     }
   }
@@ -53,8 +53,8 @@ export async function getRepoToken(
       };
     } catch (error) {
       console.error(
-        `Failed to get installation token for ${owner}, falling back to user token:`,
-        error,
+        "Failed to get installation token, falling back to user token:",
+        error instanceof Error ? error.message : String(error),
       );
     }
   }
@@ -64,5 +64,5 @@ export async function getRepoToken(
     return { token: userToken, type: "user" };
   }
 
-  throw new Error(`No GitHub token available for owner ${owner}`);
+  throw new Error("No GitHub token available");
 }

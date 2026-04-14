@@ -6,8 +6,9 @@ import {
 } from "@/app/api/sessions/_lib/session-context";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { updateSession } from "@/lib/db/sessions";
-import { parseGitHubUrl } from "@/lib/github/client";
 import { getRepoToken } from "@/lib/github/get-repo-token";
+import { parseGitHubRepoUrl } from "@/lib/github/repo-identifiers";
+import { createRateLimitResponse, takeRateLimit } from "@/lib/rate-limit";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import {
   DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
@@ -41,6 +42,11 @@ interface CreateSandboxRequest {
   sessionId?: string;
   sandboxType?: "vercel";
 }
+
+const SANDBOX_CREATE_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 10 * 60 * 1000,
+} as const;
 
 async function syncVercelProjectEnvVarsToSandbox(params: {
   userId: string;
@@ -124,15 +130,18 @@ export async function POST(req: Request) {
   }
 
   let githubToken: string | null = null;
+  let canonicalRepoUrl: string | undefined;
 
   if (repoUrl) {
-    const parsedRepo = parseGitHubUrl(repoUrl);
+    const parsedRepo = parseGitHubRepoUrl(repoUrl);
     if (!parsedRepo) {
       return Response.json(
         { error: "Invalid GitHub repository URL" },
         { status: 400 },
       );
     }
+
+    canonicalRepoUrl = parsedRepo.canonicalUrl;
 
     try {
       const tokenResult = await getRepoToken(session.user.id, parsedRepo.owner);
@@ -161,6 +170,18 @@ export async function POST(req: Request) {
     sessionRecord = sessionContext.sessionRecord;
   }
 
+  const rateLimitResult = await takeRateLimit({
+    scope: "sandbox-create",
+    identifier: session.user.id,
+    ...SANDBOX_CREATE_RATE_LIMIT,
+  });
+  if (!rateLimitResult.allowed) {
+    return createRateLimitResponse(
+      rateLimitResult,
+      "Too many sandbox creation requests. Please wait and try again.",
+    );
+  }
+
   const sandboxName = sessionId ? getSessionSandboxName(sessionId) : undefined;
   const githubAccount = await getGitHubAccount(session.user.id);
   const githubNoreplyEmail =
@@ -186,9 +207,9 @@ export async function POST(req: Request) {
   // ============================================
   const startTime = Date.now();
 
-  const source = repoUrl
+  const source = canonicalRepoUrl
     ? {
-        repo: repoUrl,
+        repo: canonicalRepoUrl,
         branch: isNewBranch ? undefined : branch,
         newBranch: isNewBranch ? branch : undefined,
         token: githubToken ?? undefined,
@@ -276,7 +297,7 @@ export async function POST(req: Request) {
   return Response.json({
     createdAt: Date.now(),
     timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-    currentBranch: repoUrl ? branch : undefined,
+    currentBranch: canonicalRepoUrl ? branch : undefined,
     mode: "vercel",
     timing: { readyMs },
   });

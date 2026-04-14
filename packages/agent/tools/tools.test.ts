@@ -437,7 +437,11 @@ describe("tools execute behavior", () => {
         url: "https://example.com",
         method: "GET",
       },
-      executionOptions(),
+      executionOptions({
+        webFetchDnsLookup: async () => [
+          { address: "93.184.216.34", family: 4 },
+        ],
+      }),
     );
 
     expect(result).toMatchObject({
@@ -453,6 +457,46 @@ describe("tools execute behavior", () => {
         ? (result.body as string)
         : "";
     expect(body.length).toBe(20_000);
+  });
+
+  test("webFetchTool rejects localhost and does not call fetch", async () => {
+    const fetchSpy = mock(() => Promise.resolve(new Response("unexpected")));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await webFetchTool.execute?.(
+      {
+        url: "http://localhost:3000",
+        method: "GET",
+      },
+      executionOptions(),
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: "Fetch failed: Private or local network URLs are not allowed",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("webFetchTool rejects hostnames that resolve to private IPs", async () => {
+    const fetchSpy = mock(() => Promise.resolve(new Response("unexpected")));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await webFetchTool.execute?.(
+      {
+        url: "https://example.com",
+        method: "GET",
+      },
+      executionOptions({
+        webFetchDnsLookup: async () => [{ address: "127.0.0.1", family: 4 }],
+      }),
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: "Fetch failed: Private or local network URLs are not allowed",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   test("askUserQuestionTool formats structured answers", () => {
