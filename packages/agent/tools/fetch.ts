@@ -4,45 +4,37 @@ import { z } from "zod";
 const fetchInputSchema = z.object({
   url: z.string().url().describe("The URL to fetch"),
   method: z
-    .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+    .literal("GET")
     .optional()
-    .describe("HTTP method. Default: GET"),
+    .describe("HTTP method. Only GET is supported."),
   headers: z
     .record(z.string(), z.string())
     .optional()
     .describe("Optional HTTP headers as key-value pairs"),
-  body: z
-    .string()
-    .optional()
-    .describe("Optional request body (for POST/PUT/PATCH)"),
 });
 
 export const webFetchTool = tool({
-  description: `Fetch a URL from the web.
+  description: `Fetch a URL from the web using GET requests only.
 
 USAGE:
-- Make HTTP requests to external URLs
-- Supports GET, POST, PUT, PATCH, DELETE, and HEAD methods
+- Make GET requests to external URLs
+- Optional headers are supported
 - Returns the response status, headers, and body text
 - Body is truncated to 20000 characters to avoid overwhelming context
 
 EXAMPLES:
 - Simple GET: url: "https://api.example.com/data"
-- POST with JSON: url: "https://api.example.com/items", method: "POST", headers: {"Content-Type": "application/json"}, body: "{\\"name\\":\\"item\\"}"`,
+- GET with headers: url: "https://api.example.com/data", headers: {"Accept": "application/json"}`,
   inputSchema: fetchInputSchema,
-  execute: async ({ url, method = "GET", headers, body }) => {
+  execute: async ({ url, headers }) => {
     try {
       const MAX_BODY_LENGTH = 20000;
 
-      const init: RequestInit = {
-        method,
+      const response = await fetch(url, {
+        method: "GET",
         headers,
         signal: AbortSignal.timeout(30000),
-      };
-      if (method !== "GET" && method !== "HEAD" && body) {
-        init.body = body;
-      }
-      const response = await fetch(url, init);
+      });
 
       const responseHeaders: Record<string, string> = {};
       response.headers.forEach((value, key) => {

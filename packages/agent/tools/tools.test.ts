@@ -422,6 +422,32 @@ describe("tools execute behavior", () => {
     sandboxRegistry.clear();
   });
 
+  test("webFetchTool only accepts GET requests", async () => {
+    const fetchCalls: Array<Parameters<typeof fetch>> = [];
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+      fetchCalls.push(args);
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    await webFetchTool.execute?.(
+      {
+        url: "https://example.com",
+        method: "POST",
+        headers: { Accept: "application/json" },
+      } as never,
+      executionOptions(),
+    );
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]).toEqual([
+      "https://example.com",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Accept: "application/json" },
+      }),
+    ]);
+  });
+
   test("webFetchTool truncates oversized response bodies", async () => {
     globalThis.fetch = ((..._args: Parameters<typeof fetch>) =>
       Promise.resolve(
@@ -435,7 +461,6 @@ describe("tools execute behavior", () => {
     const result = await webFetchTool.execute?.(
       {
         url: "https://example.com",
-        method: "GET",
       },
       executionOptions(),
     );
