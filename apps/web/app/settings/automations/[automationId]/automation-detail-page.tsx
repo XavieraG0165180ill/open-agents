@@ -354,42 +354,6 @@ export function AutomationDetailPage({
               </div>
             </div>
 
-            {/* ── Latest Run ── */}
-            <div className="space-y-4 border-t border-border/50 pt-8">
-              <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Latest Run
-              </h2>
-              {automation.lastRunStatus ? (
-                <div
-                  className={cn(
-                    "rounded-md border-l-2 bg-muted/20 px-4 py-3",
-                    getRunStatusBorderColor(automation.lastRunStatus),
-                  )}
-                >
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="text-xs font-medium uppercase tracking-wide">
-                      {automation.lastRunStatus.replaceAll("_", " ")}
-                    </span>
-                    {automation.lastRunAt ? (
-                      <span className="text-xs text-muted-foreground">
-                        {formatRunTime(automation.lastRunAt)}
-                      </span>
-                    ) : null}
-                  </div>
-                  {automation.lastRunSummary ? (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {automation.lastRunSummary}
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No runs yet. Use Run now or wait for the next scheduled
-                  execution.
-                </p>
-              )}
-            </div>
-
             {/* ── Tools ── */}
             <div className="space-y-4 border-t border-border/50 pt-8">
               <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
