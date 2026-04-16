@@ -32,8 +32,6 @@ async function exchangeTokenForGatewayKey(params: {
   const url = `https://api.vercel.com/api-keys?teamId=${encodeURIComponent(params.teamId)}`;
   const body = JSON.stringify({
     purpose: "ai-gateway",
-    name: "Open Harness Gateway Key",
-    exchange: true,
   });
 
   console.log("[gateway-key] Exchange request:", { url, body });
