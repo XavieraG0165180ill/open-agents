@@ -28,23 +28,45 @@ async function exchangeTokenForGatewayKey(params: {
   token: string;
   teamId: string;
 }): Promise<string> {
-  const response = await fetchVercelApi<ExchangeApiKeyResponse>({
-    method: "POST",
-    path: "/api-keys",
-    token: params.token,
-    query: new URLSearchParams({ teamId: params.teamId }),
-    body: {
-      purpose: "ai-gateway",
-      name: "Open Harness Gateway Key",
-      exchange: true,
-    },
+  // TODO: remove raw fetch debug after gateway-key exchange is working
+  const url = `https://api.vercel.com/api-keys?teamId=${encodeURIComponent(params.teamId)}`;
+  const body = JSON.stringify({
+    purpose: "ai-gateway",
+    name: "Open Harness Gateway Key",
+    exchange: true,
   });
 
-  if (!response.apiKeyString) {
+  console.log("[gateway-key] Exchange request:", { url, body });
+
+  const rawResponse = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      "Content-Type": "application/json",
+    },
+    body,
+  });
+
+  const responseText = await rawResponse.text();
+  console.log("[gateway-key] Exchange response:", {
+    status: rawResponse.status,
+    body: responseText.substring(0, 500),
+  });
+
+  if (!rawResponse.ok) {
+    throw new VercelApiError(
+      `Vercel API POST /api-keys failed (${rawResponse.status})`,
+      rawResponse.status,
+      responseText,
+    );
+  }
+
+  const data = JSON.parse(responseText) as ExchangeApiKeyResponse;
+  if (!data.apiKeyString) {
     throw new Error("Vercel API did not return an API key");
   }
 
-  return response.apiKeyString;
+  return data.apiKeyString;
 }
 
 /**
@@ -60,6 +82,33 @@ export async function obtainGatewayApiKey(params: {
   const token = await getUserVercelToken(params.userId);
   if (!token) {
     return null;
+  }
+
+  // TODO: remove debug logging after gateway-key exchange is working
+  console.log("[gateway-key] Debug:", {
+    tokenPrefix: token.substring(0, 8) + "...",
+    tokenLength: token.length,
+    teamId: params.teamId,
+    appClientId: process.env.NEXT_PUBLIC_VERCEL_APP_CLIENT_ID,
+  });
+
+  // Introspect the token to see what permissions it carries
+  try {
+    const introspectResponse = await fetch(
+      "https://api.vercel.com/login/oauth/token/introspect",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ token }),
+      },
+    );
+    const introspectData = await introspectResponse.text();
+    console.log("[gateway-key] Token introspection:", {
+      status: introspectResponse.status,
+      body: introspectData.substring(0, 1000),
+    });
+  } catch (introspectError) {
+    console.error("[gateway-key] Token introspection failed:", introspectError);
   }
 
   try {
