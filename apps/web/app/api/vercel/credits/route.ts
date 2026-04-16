@@ -13,6 +13,7 @@ export async function GET() {
   const [row] = await db
     .select({
       gatewayApiKey: vercelConnections.gatewayApiKey,
+      teamId: vercelConnections.teamId,
     })
     .from(vercelConnections)
     .where(eq(vercelConnections.userId, session.user.id))
@@ -26,7 +27,9 @@ export async function GET() {
   }
 
   try {
+    // TODO: remove after debugging credits display
     const apiKey = decrypt(row.gatewayApiKey);
+    console.log("[credits] Using key prefix:", apiKey.substring(0, 10) + "...", "for team:", row.teamId);
 
     const response = await fetch("https://ai-gateway.vercel.sh/v1/credits", {
       headers: {
