@@ -4,12 +4,8 @@ export type {
   AgentSandboxContext,
   OpenAgentsAgentCallOptions,
   OpenAgentsAgentModelInput,
-} from "./open-agents-agent";
-export {
-  defaultModel,
-  defaultModelLabel,
-  openAgentsAgent,
-} from "./open-agents-agent";
+} from "./agent";
+export { defaultModel, defaultModelLabel, openAgentsAgent } from "./agent";
 // Skills exports
 export { discoverSkills, parseSkillFrontmatter } from "./skills/discovery";
 export { extractSkillBody, substituteArguments } from "./skills/loader";
