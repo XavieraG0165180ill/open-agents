@@ -1,6 +1,6 @@
 ---
 name: remove-demo-limits
-description: Removes Open Harness hosted demo restrictions from a fork. Use when a maintainer wants to remove managed-template trial caps, hosted deployment gating, or "deploy your own" limits. Triggers on "remove demo limits", "remove trial limits", "remove hosted restrictions", "open this up for my fork", "remove managed template restrictions".
+description: Removes Open Agents hosted demo restrictions from a fork. Use when a maintainer wants to remove managed-template trial caps, hosted deployment gating, or "deploy your own" limits. Triggers on "remove demo limits", "remove trial limits", "remove hosted restrictions", "open this up for my fork", "remove managed template restrictions".
 ---
 
 Remove the managed-template trial restrictions with the smallest coherent change.

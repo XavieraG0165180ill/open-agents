@@ -1,6 +1,6 @@
 import { checkBotId } from "botid/server";
 import { botIdConfig } from "@/lib/botid";
-import { connectSandbox } from "@open-harness/sandbox";
+import { connectSandbox } from "@open-agents/sandbox";
 import { gateway, generateText } from "ai";
 import {
   ensureForkExists,

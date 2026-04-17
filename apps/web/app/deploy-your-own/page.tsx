@@ -36,7 +36,7 @@ const DEPLOY_TEMPLATE_URL = (() => {
     ["project-name", "open-agents"],
     ["repository-name", "open-agents"],
     ["repository-url", "https://github.com/vercel-labs/open-agents"],
-    ["demo-title", "Open Harness"],
+    ["demo-title", "Open Agents"],
     [
       "demo-description",
       "Open-source reference app for building and running background coding agents on Vercel.",
@@ -57,16 +57,14 @@ const DEPLOY_TEMPLATE_URL = (() => {
 export const metadata: Metadata = {
   title: "Deploy your own",
   description:
-    "Deploy your own copy of Open Harness to sign in with your own account.",
+    "Deploy your own copy of Open Agents to sign in with your own account.",
 };
 
 export default function DeployYourOwnPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6 py-24 text-foreground">
       <div className="flex max-w-xl flex-col items-center text-center">
-        <p className="text-sm font-medium text-muted-foreground">
-          Open Harness
-        </p>
+        <p className="text-sm font-medium text-muted-foreground">Open Agents</p>
         <h1 className="mt-4 text-4xl font-semibold tracking-tight">
           Deploy your own
         </h1>

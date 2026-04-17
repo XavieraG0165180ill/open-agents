@@ -10,13 +10,13 @@ describe("repo-identifiers", () => {
   test("accepts safe GitHub owner and repo segments", () => {
     expect(isValidGitHubRepoOwner("vercel")).toBe(true);
     expect(isValidGitHubRepoOwner("vercel-labs")).toBe(true);
-    expect(isValidGitHubRepoName("open-harness")).toBe(true);
-    expect(isValidGitHubRepoName("open_harness.v2")).toBe(true);
+    expect(isValidGitHubRepoName("open-agents")).toBe(true);
+    expect(isValidGitHubRepoName("open_agents.v2")).toBe(true);
   });
 
   test("rejects unsafe GitHub owner and repo segments", () => {
     expect(isValidGitHubRepoOwner('vercel" && echo nope && "')).toBe(false);
-    expect(isValidGitHubRepoName("open harness")).toBe(false);
+    expect(isValidGitHubRepoName("open agents")).toBe(false);
   });
 
   test("builds an encoded auth remote url for valid coordinates", () => {
@@ -24,10 +24,10 @@ describe("repo-identifiers", () => {
       buildGitHubAuthRemoteUrl({
         token: "ghp token/with?chars",
         owner: "vercel",
-        repo: "open-harness",
+        repo: "open-agents",
       }),
     ).toBe(
-      "https://x-access-token:ghp%20token%2Fwith%3Fchars@github.com/vercel/open-harness.git",
+      "https://x-access-token:ghp%20token%2Fwith%3Fchars@github.com/vercel/open-agents.git",
     );
   });
 
@@ -36,7 +36,7 @@ describe("repo-identifiers", () => {
       buildGitHubAuthRemoteUrl({
         token: "ghp_test",
         owner: 'vercel" && echo nope && "',
-        repo: "open-harness",
+        repo: "open-agents",
       }),
     ).toBeNull();
   });

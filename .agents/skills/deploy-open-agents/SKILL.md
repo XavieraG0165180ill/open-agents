@@ -1,9 +1,9 @@
 ---
-name: deploy-open-harness
-description: Guides a user through collecting the credentials needed to deploy their own copy of Open Harness, deploying this repo on Vercel, and completing first-run setup. Use for requests about deploying, self-hosting, configuring credentials, or getting started with a fork of this app.
+name: deploy-open-agents
+description: Guides a user through collecting the credentials needed to deploy their own copy of Open Agents, deploying this repo on Vercel, and completing first-run setup. Use for requests about deploying, self-hosting, configuring credentials, or getting started with a fork of this app.
 ---
 
-You are helping a user deploy their own copy of Open Harness.
+You are helping a user deploy their own copy of Open Agents.
 
 Base your guidance on the current codebase, not on older Harness-era setup assumptions.
 
@@ -125,7 +125,7 @@ Store the credentials as:
 - `VERCEL_APP_CLIENT_SECRET`
 
 ### GitHub App
-Tell the user they do not need a separate GitHub OAuth app. Open Harness uses the GitHub App's user authorization flow.
+Tell the user they do not need a separate GitHub OAuth app. Open Agents uses the GitHub App's user authorization flow.
 
 Tell the user to create a GitHub App and set:
 

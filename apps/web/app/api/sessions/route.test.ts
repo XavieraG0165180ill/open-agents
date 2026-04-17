@@ -139,9 +139,9 @@ describe("/api/sessions POST vercel project linking", () => {
       createJsonRequest(
         {
           branch: "main",
-          cloneUrl: "https://github.com/vercel/open-harness",
+          cloneUrl: "https://github.com/vercel/open-agents",
           repoOwner: "vercel",
-          repoName: "open-harness",
+          repoName: "open-agents",
         },
         "https://open-agents.dev/api/sessions",
       ),
@@ -176,9 +176,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: "Vercel",
-        repoName: "Open-Harness",
+        repoName: "Open-Agents",
         branch: "main",
-        cloneUrl: "https://github.com/Vercel/Open-Harness",
+        cloneUrl: "https://github.com/Vercel/Open-Agents",
         vercelProject,
       }),
     );
@@ -191,13 +191,13 @@ describe("/api/sessions POST vercel project linking", () => {
       {
         userId: "user-1",
         repoOwner: "Vercel",
-        repoName: "Open-Harness",
+        repoName: "Open-Agents",
         project: matchingProjects[0],
       },
     ]);
     expect(createCalls[0]).toMatchObject({
       repoOwner: "Vercel",
-      repoName: "Open-Harness",
+      repoName: "Open-Agents",
       vercelProjectId: "project-1",
       vercelProjectName: "app",
       vercelTeamId: "team-1",
@@ -222,9 +222,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: "vercel",
-        repoName: "open-harness",
+        repoName: "open-agents",
         branch: "main",
-        cloneUrl: "https://github.com/vercel/open-harness",
+        cloneUrl: "https://github.com/vercel/open-agents",
         vercelProject: {
           projectId: "project-999",
           projectName: "rogue-project",
@@ -256,9 +256,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: "vercel",
-        repoName: "open-harness",
+        repoName: "open-agents",
         branch: "main",
-        cloneUrl: "https://github.com/vercel/open-harness",
+        cloneUrl: "https://github.com/vercel/open-agents",
       }),
     );
     const body = (await response.json()) as {
@@ -289,9 +289,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: "vercel",
-        repoName: "open-harness",
+        repoName: "open-agents",
         branch: "main",
-        cloneUrl: "https://github.com/vercel/open-harness",
+        cloneUrl: "https://github.com/vercel/open-agents",
         vercelProject: null,
       }),
     );
@@ -316,9 +316,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: "vercel",
-        repoName: "open-harness",
+        repoName: "open-agents",
         branch: "main",
-        cloneUrl: "https://github.com/vercel/open-harness",
+        cloneUrl: "https://github.com/vercel/open-agents",
       }),
     );
 
@@ -334,9 +334,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: 'vercel" && echo nope && "',
-        repoName: "open-harness",
+        repoName: "open-agents",
         branch: "main",
-        cloneUrl: "https://github.com/vercel/open-harness",
+        cloneUrl: "https://github.com/vercel/open-agents",
       }),
     );
     const body = (await response.json()) as { error: string };
@@ -352,9 +352,9 @@ describe("/api/sessions POST vercel project linking", () => {
     const response = await POST(
       createJsonRequest({
         repoOwner: "vercel",
-        repoName: "open-harness",
+        repoName: "open-agents",
         branch: "feature/auto-pr",
-        cloneUrl: "https://github.com/vercel/open-harness",
+        cloneUrl: "https://github.com/vercel/open-agents",
         autoCommitPush: true,
         autoCreatePr: true,
       }),

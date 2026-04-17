@@ -79,11 +79,11 @@ describe("pr-content", () => {
 
     const section = await resolvePullRequestContextSection({
       sessionId: "session-1",
-      appBaseUrl: "https://openharness.dev",
+      appBaseUrl: "https://openagents.dev",
     });
 
     expect(section).toBe(
-      "[Chat](https://openharness.dev/sessions/session-1/chats/chat-2) - Built with guidance from [Nico Albanese](https://github.com/nicoalbanese10)",
+      "[Chat](https://openagents.dev/sessions/session-1/chats/chat-2) - Built with guidance from [Nico Albanese](https://github.com/nicoalbanese10)",
     );
   });
 
@@ -103,18 +103,18 @@ describe("pr-content", () => {
   test("resolvePullRequestAppBaseUrl prefers the active deployment url", async () => {
     const { resolvePullRequestAppBaseUrl } = await prContentModulePromise;
 
-    process.env.VERCEL_URL = "preview-openharness.vercel.app";
+    process.env.VERCEL_URL = "preview-openagents.vercel.app";
     process.env.VERCEL_ENV = "preview";
-    process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL = "openharness.dev";
+    process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL = "openagents.dev";
 
     expect(resolvePullRequestAppBaseUrl()).toBe(
-      "https://preview-openharness.vercel.app",
+      "https://preview-openagents.vercel.app",
     );
 
     delete process.env.VERCEL_URL;
     process.env.VERCEL_ENV = "production";
 
-    expect(resolvePullRequestAppBaseUrl()).toBe("https://openharness.dev");
+    expect(resolvePullRequestAppBaseUrl()).toBe("https://openagents.dev");
   });
 
   test("appendPullRequestContextSection appends the footer after a horizontal rule", async () => {
