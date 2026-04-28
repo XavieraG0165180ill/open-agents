@@ -280,21 +280,20 @@ export async function openPullRequest(params: {
     throw new Error(getRepoAccessErrorMessage(access.reason));
   }
 
-  const result = await withScopedInstallationOctokit({
-    installationId: access.installationId,
-    repositoryId: access.repositoryId,
-    permissions: { contents: "read", pull_requests: "write" },
-    operation: async (octokit) =>
-      openPullRequestOnGitHub({
-        repoUrl,
-        branchName: resolvedBranch,
-        headRef,
-        title,
-        body: prBody || "",
-        baseBranch,
-        isDraft,
-        octokit,
-      }),
+  const userToken = await getUserGitHubToken(session.user.id);
+  if (!userToken) {
+    throw new Error("No GitHub token available for pull request creation");
+  }
+
+  const result = await openPullRequestOnGitHub({
+    repoUrl,
+    branchName: resolvedBranch,
+    headRef,
+    title,
+    body: prBody || "",
+    baseBranch,
+    isDraft,
+    token: userToken,
   });
 
   if (!result.success) {

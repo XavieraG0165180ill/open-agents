@@ -107,14 +107,6 @@ mock.module("@/lib/github/access", () => ({
   getRepoAccessErrorMessage: () => "Access denied",
 }));
 
-mock.module("@/lib/github/app", () => ({
-  withScopedInstallationOctokit: async ({
-    operation,
-  }: {
-    operation: (octokit: Record<string, never>) => Promise<unknown>;
-  }) => operation({}),
-}));
-
 mock.module("@/lib/github/pulls", () => ({
   findPullRequest: findPullRequestSpy,
   openPullRequest: openPullRequestSpy,
@@ -320,7 +312,7 @@ describe("performAutoCreatePr", () => {
         repoUrl: "https://github.com/acme/repo",
         branchName: "feature-branch",
         baseBranch: "main",
-        octokit: {},
+        token: "ghp_user",
       }),
     );
     expect(updateSessionSpy).toHaveBeenCalledWith("session-1", {

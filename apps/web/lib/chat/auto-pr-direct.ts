@@ -7,7 +7,6 @@ import {
   verifyRepoAccess,
   getRepoAccessErrorMessage,
 } from "@/lib/github/access";
-import { withScopedInstallationOctokit } from "@/lib/github/app";
 import {
   isValidGitHubRepoName,
   isValidGitHubRepoOwner,
@@ -300,19 +299,13 @@ export async function performAutoCreatePr(
     };
   }
 
-  const createResult = await withScopedInstallationOctokit({
-    installationId: access.installationId,
-    repositoryId: access.repositoryId,
-    permissions: { contents: "read", pull_requests: "write" },
-    operation: async (octokit) =>
-      openPullRequest({
-        repoUrl,
-        branchName,
-        title: prContentResult.title,
-        body: prContentResult.body,
-        baseBranch: defaultBranch,
-        octokit,
-      }),
+  const createResult = await openPullRequest({
+    repoUrl,
+    branchName,
+    title: prContentResult.title,
+    body: prContentResult.body,
+    baseBranch: defaultBranch,
+    token: userToken,
   });
 
   if (!createResult?.success) {
