@@ -7,14 +7,17 @@ import {
 } from "@/app/api/sessions/_lib/session-context";
 import { botIdConfig } from "@/lib/botid";
 import { getGitHubUserProfile } from "@/lib/github/users";
-import { getUserGitHubToken } from "@/lib/github/token";
 import { updateSession } from "@/lib/db/sessions";
 import { parseGitHubUrl } from "@/lib/github/client";
 import {
   verifyRepoAccess,
   getRepoAccessErrorMessage,
 } from "@/lib/github/access";
-import { getInstallationToken } from "@/lib/github/app";
+import {
+  mintInstallationToken,
+  revokeInstallationToken,
+  type ScopedInstallationToken,
+} from "@/lib/github/app";
 import {
   DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
   DEFAULT_SANDBOX_PORTS,
@@ -114,11 +117,9 @@ export async function POST(req: Request) {
     return Response.json({ error: "Access denied" }, { status: 403 });
   }
 
-  const githubToken = await getUserGitHubToken(session.user.id);
-
   // verify repo access (user permissions ∩ installation scope) and get
-  // an installation token for cloning when a repo is provided
-  let cloneToken: string | undefined;
+  // a repo-scoped read token for clone/setup when a repo is provided
+  let setupToken: ScopedInstallationToken | undefined;
 
   if (repoUrl) {
     const parsedRepo = parseGitHubUrl(repoUrl);
@@ -126,13 +127,6 @@ export async function POST(req: Request) {
       return Response.json(
         { error: "Invalid GitHub repository URL" },
         { status: 400 },
-      );
-    }
-
-    if (!githubToken) {
-      return Response.json(
-        { error: "Connect GitHub to access repositories" },
-        { status: 403 },
       );
     }
 
@@ -149,13 +143,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // use installation token for clone (scoped to admin-approved repos)
-    try {
-      cloneToken = await getInstallationToken(access.installationId);
-    } catch {
-      // fall back to user token if installation token fails
-      cloneToken = githubToken;
-    }
+    setupToken = await mintInstallationToken({
+      installationId: access.installationId,
+      repositoryIds: [access.repositoryId],
+      permissions: { contents: "read" },
+    });
   }
 
   // Validate session ownership
@@ -200,25 +192,30 @@ export async function POST(req: Request) {
       }
     : undefined;
 
-  const sandbox = await connectSandbox({
-    state: {
-      type: "vercel",
-      ...(sandboxName ? { sandboxName } : {}),
-      source,
-    },
-    options: {
-      // installation token for clone (scoped to admin-approved repos),
-      // user token for credential brokering (api calls from sandbox)
-      githubToken: cloneToken ?? githubToken ?? undefined,
-      gitUser,
-      timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-      ports: DEFAULT_SANDBOX_PORTS,
-      baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-      persistent: !!sandboxName,
-      resume: !!sandboxName,
-      createIfMissing: !!sandboxName,
-    },
-  });
+  let sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  try {
+    sandbox = await connectSandbox({
+      state: {
+        type: "vercel",
+        ...(sandboxName ? { sandboxName } : {}),
+        source,
+      },
+      options: {
+        githubToken: setupToken?.token,
+        gitUser,
+        timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+        ports: DEFAULT_SANDBOX_PORTS,
+        baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
+        persistent: !!sandboxName,
+        resume: !!sandboxName,
+        createIfMissing: !!sandboxName,
+      },
+    });
+  } finally {
+    if (setupToken) {
+      await revokeInstallationToken(setupToken.token);
+    }
+  }
 
   if (sessionId && sandbox.getState) {
     const nextState = sandbox.getState() as SandboxState;

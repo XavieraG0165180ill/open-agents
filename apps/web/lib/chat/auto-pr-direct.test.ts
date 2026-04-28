@@ -72,6 +72,12 @@ const generatePullRequestContentFromSandboxSpy = mock(
   async () => prContentResult,
 );
 const getUserGitHubTokenSpy = mock(async (_userId?: string) => userTokenResult);
+const verifyRepoAccessSpy = mock(async () => ({
+  ok: true,
+  installationId: 999,
+  repositoryId: 123,
+  defaultBranch: "main",
+}));
 
 const sandbox = {
   workingDirectory: "/vercel/sandbox",
@@ -83,6 +89,8 @@ mock.module("@/lib/git/helpers", () => ({
 }));
 
 mock.module("@/lib/db/sessions", () => ({
+  getChatsBySessionId: async () => [],
+  getSessionById: async () => null,
   updateSession: updateSessionSpy,
 }));
 
@@ -92,6 +100,19 @@ mock.module("@/lib/github/repos", () => ({
 
 mock.module("@/lib/github/token", () => ({
   getUserGitHubToken: getUserGitHubTokenSpy,
+}));
+
+mock.module("@/lib/github/access", () => ({
+  verifyRepoAccess: verifyRepoAccessSpy,
+  getRepoAccessErrorMessage: () => "Access denied",
+}));
+
+mock.module("@/lib/github/app", () => ({
+  withScopedInstallationOctokit: async ({
+    operation,
+  }: {
+    operation: (octokit: Record<string, never>) => Promise<unknown>;
+  }) => operation({}),
 }));
 
 mock.module("@/lib/github/pulls", () => ({
@@ -112,7 +133,6 @@ function defaultExecResults(): Map<string, ExecResult> {
       "git symbolic-ref --short HEAD",
       { success: true, stdout: "feature-branch" },
     ],
-    ["git remote set-url", { success: true, stdout: "" }],
     ["git fetch origin", { success: true, stdout: "" }],
     ["git rev-parse HEAD", { success: true, stdout: "abc123" }],
     [
@@ -148,6 +168,7 @@ beforeEach(() => {
   openPullRequestSpy.mockClear();
   generatePullRequestContentFromSandboxSpy.mockClear();
   getUserGitHubTokenSpy.mockClear();
+  verifyRepoAccessSpy.mockClear();
 
   execResults = defaultExecResults();
   userTokenResult = "ghp_user";
@@ -220,10 +241,7 @@ describe("performAutoCreatePr", () => {
       skipReason:
         "Repository owner or name is not supported for auto PR creation",
     } satisfies AutoCreatePrResult);
-    const setUrlCall = execSpy.mock.calls.find((call) =>
-      String(call[0]).includes("git remote set-url"),
-    );
-    expect(setUrlCall).toBeUndefined();
+    expect(execSpy).toHaveBeenCalledTimes(1);
   });
 
   test("skips when the current branch is not available on origin", async () => {
@@ -302,6 +320,7 @@ describe("performAutoCreatePr", () => {
         repoUrl: "https://github.com/acme/repo",
         branchName: "feature-branch",
         baseBranch: "main",
+        octokit: {},
       }),
     );
     expect(updateSessionSpy).toHaveBeenCalledWith("session-1", {

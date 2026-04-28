@@ -4,6 +4,11 @@ import { updateSession } from "@/lib/db/sessions";
 import { openPullRequest, findPullRequest } from "@/lib/github/pulls";
 import { fetchGitHubBranches } from "@/lib/github/repos";
 import {
+  verifyRepoAccess,
+  getRepoAccessErrorMessage,
+} from "@/lib/github/access";
+import { withScopedInstallationOctokit } from "@/lib/github/app";
+import {
   isValidGitHubRepoName,
   isValidGitHubRepoOwner,
 } from "@/lib/github/urls";
@@ -143,8 +148,6 @@ export async function performAutoCreatePr(
     };
   }
 
-  // credential brokering handles remote auth — no manual remote set-url needed
-
   const defaultBranch = await resolveDefaultBranch({
     sandbox,
     repoOwner,
@@ -282,13 +285,34 @@ export async function performAutoCreatePr(
   }
 
   const repoUrl = `https://github.com/${repoOwner}/${repoName}`;
-  const createResult = await openPullRequest({
-    repoUrl,
-    branchName,
-    title: prContentResult.title,
-    body: prContentResult.body,
-    baseBranch: defaultBranch,
-    token: userToken,
+  const access = await verifyRepoAccess({
+    userId,
+    owner: repoOwner,
+    repo: repoName,
+  });
+
+  if (!access.ok) {
+    return {
+      created: false,
+      syncedExisting: false,
+      skipped: false,
+      error: getRepoAccessErrorMessage(access.reason),
+    };
+  }
+
+  const createResult = await withScopedInstallationOctokit({
+    installationId: access.installationId,
+    repositoryId: access.repositoryId,
+    permissions: { contents: "read", pull_requests: "write" },
+    operation: async (octokit) =>
+      openPullRequest({
+        repoUrl,
+        branchName,
+        title: prContentResult.title,
+        body: prContentResult.body,
+        baseBranch: defaultBranch,
+        octokit,
+      }),
   });
 
   if (!createResult?.success) {
