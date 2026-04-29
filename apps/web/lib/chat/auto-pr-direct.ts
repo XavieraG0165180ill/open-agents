@@ -11,7 +11,7 @@ import {
   isValidGitHubRepoName,
   isValidGitHubRepoOwner,
 } from "@/lib/github/urls";
-import { getUserGitHubToken } from "@/lib/github/token";
+import { getGitHubAppUserToken } from "@/lib/github/token";
 import { generatePullRequestContentFromSandbox } from "@/lib/github/pr-content";
 
 const SAFE_BRANCH_PATTERN = /^[\w\-/.]+$/;
@@ -137,7 +137,7 @@ export async function performAutoCreatePr(
     };
   }
 
-  const userToken = await getUserGitHubToken(userId);
+  const userToken = await getGitHubAppUserToken(userId);
   if (!userToken) {
     return {
       created: false,

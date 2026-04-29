@@ -11,7 +11,7 @@ type ExecResult = {
 };
 
 let execResults: Map<string, ExecResult>;
-let userTokenResult: string | null = "ghp_user";
+let userTokenResult: string | null = "ghu_user";
 let cachedBranchesResult: { branches: string[]; defaultBranch: string } | null =
   {
     branches: ["main", "feature-branch"],
@@ -72,6 +72,9 @@ const generatePullRequestContentFromSandboxSpy = mock(
   async () => prContentResult,
 );
 const getUserGitHubTokenSpy = mock(async (_userId?: string) => userTokenResult);
+const getGitHubAppUserTokenSpy = mock(async (_userId?: string) =>
+  getUserGitHubTokenSpy(_userId),
+);
 const verifyRepoAccessSpy = mock(async () => ({
   ok: true,
   installationId: 999,
@@ -100,6 +103,7 @@ mock.module("@/lib/github/repos", () => ({
 
 mock.module("@/lib/github/token", () => ({
   getUserGitHubToken: getUserGitHubTokenSpy,
+  getGitHubAppUserToken: getGitHubAppUserTokenSpy,
 }));
 
 mock.module("@/lib/github/access", () => ({
@@ -160,10 +164,11 @@ beforeEach(() => {
   openPullRequestSpy.mockClear();
   generatePullRequestContentFromSandboxSpy.mockClear();
   getUserGitHubTokenSpy.mockClear();
+  getGitHubAppUserTokenSpy.mockClear();
   verifyRepoAccessSpy.mockClear();
 
   execResults = defaultExecResults();
-  userTokenResult = "ghp_user";
+  userTokenResult = "ghu_user";
   cachedBranchesResult = {
     branches: ["main", "feature-branch"],
     defaultBranch: "main",
@@ -305,6 +310,7 @@ describe("performAutoCreatePr", () => {
       prNumber: 42,
       prUrl: "https://github.com/acme/repo/pull/42",
     } satisfies AutoCreatePrResult);
+    expect(getGitHubAppUserTokenSpy).toHaveBeenCalledWith("user-1");
     expect(getUserGitHubTokenSpy).toHaveBeenCalledWith("user-1");
     expect(generatePullRequestContentFromSandboxSpy).toHaveBeenCalledTimes(1);
     expect(openPullRequestSpy).toHaveBeenCalledWith(
@@ -312,7 +318,7 @@ describe("performAutoCreatePr", () => {
         repoUrl: "https://github.com/acme/repo",
         branchName: "feature-branch",
         baseBranch: "main",
-        token: "ghp_user",
+        token: "ghu_user",
       }),
     );
     expect(updateSessionSpy).toHaveBeenCalledWith("session-1", {

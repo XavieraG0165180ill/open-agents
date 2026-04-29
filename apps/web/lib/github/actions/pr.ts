@@ -16,7 +16,7 @@ import {
   getRepoAccessErrorMessage,
 } from "@/lib/github/access";
 import { withScopedInstallationOctokit } from "@/lib/github/app";
-import { getUserGitHubToken } from "@/lib/github/token";
+import { getGitHubAppUserToken, getUserGitHubToken } from "@/lib/github/token";
 import { generatePullRequestContentFromSandbox } from "@/lib/github/pr-content";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
 import { isSandboxActive } from "@/lib/sandbox/utils";
@@ -280,7 +280,7 @@ export async function openPullRequest(params: {
     throw new Error(getRepoAccessErrorMessage(access.reason));
   }
 
-  const userToken = await getUserGitHubToken(session.user.id);
+  const userToken = await getGitHubAppUserToken(session.user.id);
   if (!userToken) {
     throw new Error("No GitHub token available for pull request creation");
   }
