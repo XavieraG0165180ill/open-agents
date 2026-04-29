@@ -274,6 +274,7 @@ export async function openPullRequest(params: {
     userId: session.user.id,
     owner: parsedRepoUrl.owner,
     repo: parsedRepoUrl.repo,
+    requiredUserPermission: shouldAutoMerge ? "write" : "read",
   });
 
   if (!access.ok) {
@@ -429,6 +430,7 @@ export async function mergePr(params: {
     userId: session.user.id,
     owner: repoOwner,
     repo: repoName,
+    requiredUserPermission: "write",
   });
 
   if (!access.ok) {
@@ -597,6 +599,7 @@ export async function closePr(params: {
     userId: session.user.id,
     owner: repoOwner,
     repo: repoName,
+    requiredUserPermission: "write",
   });
 
   if (!access.ok) {

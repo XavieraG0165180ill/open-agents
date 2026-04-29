@@ -81,6 +81,7 @@ export async function performAutoCommit(
     userId,
     owner: repoOwner,
     repo: repoName,
+    requiredUserPermission: "write",
   });
 
   if (!access.ok) {

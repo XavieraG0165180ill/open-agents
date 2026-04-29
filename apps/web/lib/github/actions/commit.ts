@@ -170,6 +170,7 @@ export async function commitChanges(params: {
     userId: session.user.id,
     owner: sessionRecord.repoOwner,
     repo: sessionRecord.repoName,
+    requiredUserPermission: "write",
   });
 
   if (!access.ok) {

@@ -5,8 +5,11 @@ import { getUserOctokit } from "./client";
 export type RepoAccessDeniedReason =
   | "no_user_token"
   | "user_no_access"
+  | "user_no_write"
   | "no_installation"
   | "app_no_access";
+
+export type RequiredRepoUserPermission = "read" | "write";
 
 export type RepoAccessResult =
   | {
@@ -16,6 +19,20 @@ export type RepoAccessResult =
       defaultBranch: string;
     }
   | { ok: false; reason: RepoAccessDeniedReason };
+
+function hasUserWritePermission(
+  permissions:
+    | {
+        admin: boolean;
+        maintain?: boolean;
+        push: boolean;
+      }
+    | undefined,
+): boolean {
+  return Boolean(
+    permissions?.admin || permissions?.maintain || permissions?.push,
+  );
+}
 
 function getGitHubHttpStatus(error: unknown): number | null {
   if (!error || typeof error !== "object") {
@@ -49,8 +66,9 @@ export async function verifyRepoAccess(params: {
   userId: string;
   owner: string;
   repo: string;
+  requiredUserPermission?: RequiredRepoUserPermission;
 }): Promise<RepoAccessResult> {
-  const { userId, owner, repo } = params;
+  const { userId, owner, repo, requiredUserPermission = "read" } = params;
 
   // 1. check user can see the repo
   const userOctokit = await getUserOctokit(userId);
@@ -64,6 +82,12 @@ export async function verifyRepoAccess(params: {
     const userRepoResponse = await userOctokit.rest.repos.get({ owner, repo });
     repositoryId = userRepoResponse.data.id;
     defaultBranch = userRepoResponse.data.default_branch;
+    if (
+      requiredUserPermission === "write" &&
+      !hasUserWritePermission(userRepoResponse.data.permissions)
+    ) {
+      return { ok: false, reason: "user_no_write" };
+    }
   } catch (error: unknown) {
     const status = getGitHubHttpStatus(error);
     if (status === 404 || status === 403) {
@@ -121,6 +145,8 @@ export function getRepoAccessErrorMessage(
       return "Connect GitHub to access repositories";
     case "user_no_access":
       return "You don't have access to this repository";
+    case "user_no_write":
+      return "You need write access to this repository to perform this action";
     case "no_installation":
       return "GitHub App not installed for this organization. Install it from Settings > Connections.";
     case "app_no_access":
